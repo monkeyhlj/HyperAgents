@@ -2,64 +2,63 @@
 
 导航 / Navigation: [返回项目首页](../README.md) | [中文 README](../README.zh.md) | [English README](../README.en.md)
 
-本目录用于解释当前项目每个核心节点（Node）、如何测试、以及如何接入外部资源。
-This folder explains each core node in the project, how to test it, and how to integrate external resources.
+本目录是 HyperAgents 的文档门户，覆盖系统节点、测试手册与生产化接入建议。
+This is the documentation hub for HyperAgents, covering architecture nodes, testing playbooks, and production integration guidance.
 
-中文：当前后端数据库配置、模型 Provider 配置、前端 API 地址配置统一通过工作区根目录 `.env` 管理（模板：`.env.example`）。
-English: Backend database settings, model provider settings, and frontend API endpoint are centrally managed via workspace-root `.env` (template: `.env.example`).
+配置约定 / Configuration convention:
+后端数据库、Provider、前端 API 地址统一从工作区根目录 `.env` 读取（模板：`.env.example`）。
+Backend database/provider settings and frontend API endpoint are centrally managed in workspace-root `.env` (template: `.env.example`).
 
-## 文档导航 / Navigation
+## 系统能力总览 / System Capability Overview
 
-1. `docs/quick-start.zh-en.md`
-   - 项目快速上手与运行顺序
-   - Quick start and recommended run order
-2. `docs/nodes/01-project-and-members.zh-en.md`
-   - Project 与成员权限节点
-   - Project and membership node
-3. `docs/nodes/02-resource-and-registry.zh-en.md`
-   - Resource 与 MCP/Tool/Skill Registry 节点
-   - Resource and MCP/Tool/Skill registry node
-4. `docs/nodes/03-chat-and-runtime.zh-en.md`
-   - Chat 会话与 Runtime 执行节点
-   - Chat sessions and runtime execution node
-5. `docs/nodes/04-memory-system.zh-en.md`
-   - Memory 系统（分层、降级、重试、混合检索）
-   - Memory system (layers, fallback, retry, hybrid retrieval)
-6. `docs/nodes/05-provider-layer.zh-en.md`
-   - LLM/Embedding Provider 统一适配层
-   - Unified LLM/Embedding provider layer
-7. `docs/nodes/06-database-and-migrations.zh-en.md`
-   - PostgreSQL/pgvector + Alembic 节点
-   - PostgreSQL/pgvector + Alembic node
-8. `docs/testing-playbook.zh-en.md`
-   - 手把手测试清单（API + 前端）
-   - Step-by-step test checklist (API + frontend)
-9. `docs/external-resources-integration.zh-en.md`
-   - 应该添加哪些外部资源、为什么、怎么加
-   - What external resources to add, why, and how
+```mermaid
+flowchart LR
+    UI[Frontend\nDashboard/Projects/Resources/Workbench] --> API[FastAPI API Layer]
+    API --> Runtime[Runtime Executor]
+    Runtime --> LLM1[OpenAI-Compatible Provider]
+    Runtime --> LLM2[Local Provider\nOllama/vLLM]
+    API --> Memory[Memory Service]
+    Memory --> Embed[Embedding Provider]
+    API --> Registry[Registry\nMCP/Tool/Skill]
+    API --> DB[(PostgreSQL + pgvector)]
+    Memory --> Retry[Embedding Retry Queue]
+```
 
-## 当前系统节点总览 / Current Node Map
+## 按目标阅读 / Read by Goal
 
-- Project
-- Member/Auth Header (`x-user-id`)
-- Resource (agent/workflow/tool/skill/mcp/knowledge_base)
-- Registry (mcp/tool/skill)
-- Chat Session + Message
-- Runtime Executor
-- LLM Providers (OpenAI + localhost)
-- Memory Service
-- Embedding Providers (OpenAI + localhost)
-- Memory Retry Job Queue (DB-based)
-- Database Models (PostgreSQL + pgvector)
-- Alembic Migrations
-- Frontend Console (Dashboard/Projects/Resources/Workbench)
+1. 快速跑起来 / Get running quickly: [docs/quick-start.zh-en.md](quick-start.zh-en.md)
+2. 端到端联调 / End-to-end API+UI validation: [docs/testing-playbook.zh-en.md](testing-playbook.zh-en.md)
+3. 外部资源接入 / External integration and production setup: [docs/external-resources-integration.zh-en.md](external-resources-integration.zh-en.md)
+4. 理解系统设计 / Understand architecture nodes: [docs/nodes](nodes)
 
-## 推荐阅读顺序 / Suggested Reading Order
+## 节点文档 / Node Documents
 
-1. `docs/quick-start.zh-en.md`
-2. `docs/nodes/01-project-and-members.zh-en.md`
-3. `docs/nodes/02-resource-and-registry.zh-en.md`
-4. `docs/nodes/03-chat-and-runtime.zh-en.md`
-5. `docs/nodes/04-memory-system.zh-en.md`
-6. `docs/testing-playbook.zh-en.md`
-7. `docs/external-resources-integration.zh-en.md`
+1. [docs/nodes/01-project-and-members.zh-en.md](nodes/01-project-and-members.zh-en.md): Project 与成员权限 / Project and membership
+2. [docs/nodes/02-resource-and-registry.zh-en.md](nodes/02-resource-and-registry.zh-en.md): Resource 与 Registry / Resource and registry
+3. [docs/nodes/03-chat-and-runtime.zh-en.md](nodes/03-chat-and-runtime.zh-en.md): Chat 与 Runtime / Chat and runtime
+4. [docs/nodes/04-memory-system.zh-en.md](nodes/04-memory-system.zh-en.md): Memory 分层、检索、重试 / Memory layers, retrieval, retry
+5. [docs/nodes/05-provider-layer.zh-en.md](nodes/05-provider-layer.zh-en.md): LLM/Embedding Provider 适配 / Provider abstraction
+6. [docs/nodes/06-database-and-migrations.zh-en.md](nodes/06-database-and-migrations.zh-en.md): PostgreSQL/pgvector + Alembic
+
+## 推荐学习路径 / Suggested Learning Path
+
+```mermaid
+flowchart TD
+    A[quick-start] --> B[01 project and members]
+    B --> C[02 resource and registry]
+    C --> D[03 chat and runtime]
+    D --> E[04 memory system]
+    E --> F[05 provider layer]
+    F --> G[06 database and migrations]
+    G --> H[testing playbook]
+    H --> I[external resources integration]
+```
+
+## 当前覆盖范围 / Current Coverage
+
+- Project-first domain model and visibility rules
+- Runtime provider routing for chat and embedding
+- Memory write/search, semantic retrieval, retry queue
+- Registry lifecycle for MCP/Tool/Skill
+- Migration-based schema evolution with Alembic
+- Multi-environment configuration and startup scripts

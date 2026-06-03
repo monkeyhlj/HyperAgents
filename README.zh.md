@@ -1,167 +1,69 @@
 # HyperAgents (中文)
 
-语言切换: [English](README.en.md) | [入口](README.md)
+语言: [English](README.en.md) | [主页](README.md) | [文档](docs/README.md)
 
-HyperAgents 是一个面向团队的 Agent Operating System 风格平台，用于构建、运行和测试 AI Agent。
+HyperAgents 是一个面向团队的 Project-first Agent Operating System，适合构建可管理、可扩展、可验证的 AI Agent 平台能力。
 
-## V1 范围
+## 核心亮点
 
-- Project-first 模型（所有资源都归属于项目）
-- 资源管理包括：
-  - Agent
-  - Workflow
-  - Tool
-  - Skill
-  - MCP Server
-  - Knowledge Base
-- 资源可见性策略：
-  - `private`（仅创建者）
-  - `project`（项目成员）
-  - `public`（所有人）
-- 提供项目级对话工作台用于测试资源组合
-- 支持双模式：
-  - 可视化管理（Web UI）
-  - 代码优先扩展（后端 Runtime 抽象）
+- 项目优先模型，天然具备资源边界与可见性策略。
+- 统一资源体系：Agent、Workflow、Tool、Skill、MCP、Knowledge Base。
+- Provider 无关 Runtime，支持 OpenAI 兼容和本地模型网关。
+- Memory 服务支持自动向量化、失败重试队列与混合检索。
+- Registry API 支持项目内注册与跨项目公开发现。
+- 全栈工作区：FastAPI 后端 + Vue 3 前端工作台。
 
-## Monorepo 结构
+## 仓库结构
 
-- `backend`：FastAPI 服务（API + Runtime 骨架）
-- `frontend`：Vue 3 + Vite 应用
+- `backend`：API、Runtime、Memory、数据库模型与 Alembic 迁移。
+- `frontend`：项目管理、资源管理与 Workbench 对话界面。
+- `docs`：双语节点文档、测试手册、外部集成指南。
+- `scripts`：支持 dev/staging/prod 的启动脚本（Windows + Linux）。
 
 ## 快速开始
 
-### 后端
-
-```bash
-cd backend
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
-```
-
-启动后端前请先创建工作区环境文件：
+### 1) 准备环境文件
 
 ```bash
 copy .env.example .env
 ```
 
-然后编辑 `.env`，至少设置：
+`.env` 最低建议配置：
 
 ```bash
 DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/hyperagents
+VITE_API_BASE_URL=http://localhost:8000
 ```
 
-可选：本地自动建表（开发模式）：
+### 2) 启动后端和前端（推荐）
+
+Windows PowerShell:
+
+```powershell
+./scripts/start-backend.ps1 -Environment dev -RunMigrations
+./scripts/start-frontend.ps1 -Environment dev -Install
+```
+
+Linux/macOS Bash:
 
 ```bash
-AUTO_CREATE_TABLES=true
+./scripts/start-backend.sh --env dev --migrate
+./scripts/start-frontend.sh --env dev --install
 ```
 
-默认建议通过 Alembic 管理建表与迁移。
+服务地址：
 
-### 前端
+- 后端: `http://localhost:8000`
+- 前端: `http://localhost:5173`
 
-```bash
-cd frontend
-npm install
-npm run dev
-```
+## Runtime 与 Provider 配置
 
-前端地址：`http://localhost:5173`，后端地址：`http://localhost:8000`。
-
-## 下一阶段里程碑
-
-- 持久化增强到 PostgreSQL + pgvector
-- 增加 Redis 作业队列与 Runtime Worker
-- 接入真实模型 Provider（OpenAI、本地 vLLM/Ollama）
-- 完善 MCP 传输与鉴权
-- 增加执行沙箱（Docker / Firecracker）
-- 引入 RBAC 与组织级协作
-
-## Memory Service V1
-
-Memory 已作为平台级服务，具备显式 scope 与 visibility。
-
-支持的 scope/type：
-
-- `conversation`
-- `project`
-- `agent`
-- `execution`
-- `global`
-
-可见性：
-
-- `private`
-- `project`
-- `public`
-
-API：
-
-- `POST /api/v1/memory` 写入记忆
-- `GET /api/v1/memory` 按过滤条件查询
-- `POST /api/v1/memory/semantic-search` 混合检索（向量相似度 + importance）
-- `POST /api/v1/memory/retry-embeddings` 处理 embedding 重试队列
-
-核心字段：
-
-- `project_id`, `agent_id`, `session_id`, `workflow_run_id`
-- `importance_score`（0~1）
-- `content`（JSON）
-- `embedding_status`（`skipped` / `pending` / `succeeded` / `failed`）
-- `embedding`, `embedding_provider`, `embedding_model`, `embedding_error`
-
-### 语义检索请求示例
-
-```json
-{
-  "query_embedding": [0.01, 0.02, 0.03],
-  "top_k": 10,
-  "project_id": "<project_id>",
-  "memory_scope": "project",
-  "memory_type": "project",
-  "min_importance": 0.3,
-  "similarity_weight": 0.7
-}
-```
-
-`query_embedding` 与存储向量的维度必须与 `MEMORY_EMBEDDING_DIMENSIONS` 一致（默认 1536）。
-
-混合评分公式：
-
-- `hybrid_score = similarity_weight * similarity_score + (1 - similarity_weight) * importance_score`
-
-## Alembic 迁移
-
-迁移目录在 `backend/alembic`。
-
-执行迁移：
-
-```bash
-cd backend
-alembic upgrade head
-```
-
-结构变更后创建迁移：
-
-```bash
-cd backend
-alembic revision --autogenerate -m "describe change"
-```
-
-## LLM Provider 适配层
-
-Runtime 通过 Agent 资源配置进行统一 Provider 路由。
-
-当前支持：
+支持的 Runtime Provider：
 
 - `openai`
-- `localhost`（别名：`ollama`, `vllm`）
+- `localhost`（别名：`ollama`、`vllm`）
 
-环境变量统一从工作区 `.env` 读取（模板见 `.env.example`）。
-
-LLM 相关主要配置：
+常用环境变量：
 
 ```bash
 OPENAI_API_KEY=<your_key>
@@ -171,52 +73,51 @@ OPENAI_EMBEDDING_MODEL=text-embedding-3-small
 LOCALHOST_LLM_BASE_URL=http://localhost:11434/v1
 LOCALHOST_DEFAULT_MODEL=qwen2.5:7b
 LOCALHOST_EMBEDDING_MODEL=nomic-embed-text
+RUNTIME_DEFAULT_PROVIDER=localhost
 EMBEDDING_PROVIDER=openai
 ```
 
-当发送聊天请求并传入 `agent_id` 时，Runtime 会读取该 Agent 资源中的 `model_provider`、`model_name` 和 `config.system_prompt`。
+说明：
 
-## 自动 Memory 向量化
+- `RUNTIME_DEFAULT_PROVIDER` 决定默认聊天走哪条模型通道。
+- `EMBEDDING_PROVIDER` 决定 Memory 默认向量化走哪条通道。
+- `OPENAI_EMBEDDING_MODEL` 必须是你当前 `OPENAI_BASE_URL` 对应供应商支持的向量模型名。
 
-Memory 写入支持服务端自动生成 embedding，客户端无需手工传向量。
+## 核心 API 概览
 
-`POST /api/v1/memory` 支持字段：
+- Project: `POST /api/v1/projects`, `GET /api/v1/projects`
+- Resource: `POST /api/v1/resources/projects/{project_id}`
+- Chat: `POST /api/v1/chat/projects/{project_id}/sessions`
+- Memory: `POST /api/v1/memory`, `POST /api/v1/memory/semantic-search`
+- Registry: `POST /api/v1/registry/projects/{project_id}/{kind}`
 
-- `auto_embedding`（默认 `true`）
-- `retry_on_embedding_failure`（默认 `true`）
-- `embedding_provider`（可选覆盖，`openai` / `localhost`）
-- `embedding_model`（可选覆盖）
-- `embedding_input`（可选自定义文本，不传则使用 content 的规范化 JSON）
+## Memory V1 摘要
 
-当 `auto_embedding=true` 时，后端会自动生成并存储向量。
+- scope/type: `conversation`, `project`, `agent`, `execution`, `global`
+- visibility: `private`, `project`, `public`
+- embedding_status: `skipped`, `pending`, `succeeded`, `failed`
 
-若 embedding 生成失败：
+混合评分公式：
 
-- memory 写入仍成功
-- `embedding_status` 置为 `failed`
-- 自动入重试队列
-- 响应返回后触发一次异步重试
+- `hybrid_score = similarity_weight * similarity_score + (1 - similarity_weight) * importance_score`
 
-也可手工批量触发重试：
+## 数据库与迁移
 
-- `POST /api/v1/memory/retry-embeddings?limit=20`
+```bash
+cd backend
+alembic upgrade head
+```
 
-## Registry API（MCP / Tool / Skill）
+创建迁移：
 
-项目级创建：
+```bash
+cd backend
+alembic revision --autogenerate -m "describe change"
+```
 
-- `POST /api/v1/registry/projects/{project_id}/mcp`
-- `POST /api/v1/registry/projects/{project_id}/tool`
-- `POST /api/v1/registry/projects/{project_id}/skill`
+## 文档入口
 
-项目内查询（支持 visibility 过滤）：
-
-- `GET /api/v1/registry/projects/{project_id}/mcp?visibility=project`
-- `GET /api/v1/registry/projects/{project_id}/tool?visibility=private`
-- `GET /api/v1/registry/projects/{project_id}/skill?visibility=public`
-
-跨项目公开列表：
-
-- `GET /api/v1/registry/public/mcp`
-- `GET /api/v1/registry/public/tool`
-- `GET /api/v1/registry/public/skill`
+- [docs/README.md](docs/README.md)
+- [docs/quick-start.zh-en.md](docs/quick-start.zh-en.md)
+- [docs/testing-playbook.zh-en.md](docs/testing-playbook.zh-en.md)
+- [docs/external-resources-integration.zh-en.md](docs/external-resources-integration.zh-en.md)

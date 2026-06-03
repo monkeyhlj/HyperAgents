@@ -1,167 +1,69 @@
 # HyperAgents (English)
 
-Language switch: [中文](README.zh.md) | [Entry](README.md)
+Language: [中文](README.zh.md) | [Landing](README.md) | [Docs](docs/README.md)
 
-HyperAgents is an Agent Operating System style platform for teams to build, run, and test AI agents.
+HyperAgents is a project-first Agent Operating System for teams that want structured AI workflows, not single-page demos.
 
-## V1 Scope
+## Highlights
 
-- Project-first model (all resources belong to a project)
-- Resource management for:
-  - Agent
-  - Workflow
-  - Tool
-  - Skill
-  - MCP Server
-  - Knowledge Base
-- Visibility policy per resource:
-  - `private` (owner only)
-  - `project` (project members)
-  - `public` (everyone)
-- Project chat workbench for testing configured resources
-- Dual-mode direction:
-  - visual management (web UI)
-  - code-first extensibility (backend runtime abstractions)
+- Project-first resource model with built-in visibility boundaries.
+- Unified resource types: Agent, Workflow, Tool, Skill, MCP, Knowledge Base.
+- Provider-agnostic runtime (OpenAI-compatible and local model gateways).
+- Memory service with automatic embedding, retry queue, and hybrid retrieval.
+- Registry APIs for project-scoped and public MCP/Tool/Skill discovery.
+- Full-stack workspace: FastAPI backend + Vue 3 frontend workbench.
 
-## Monorepo Structure
+## Monorepo Layout
 
-- `backend`: FastAPI service (API + runtime skeleton)
-- `frontend`: Vue 3 + Vite web application
+- `backend`: API layer, runtime executor, memory service, SQLAlchemy models, Alembic migrations.
+- `frontend`: Vue + Vite app for projects/resources/workbench testing.
+- `docs`: bilingual architecture nodes, playbooks, and integration guides.
+- `scripts`: environment-aware startup scripts for Windows and Linux.
 
 ## Quick Start
 
-### Backend
-
-```bash
-cd backend
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
-```
-
-Create workspace environment file before starting backend:
+### 1) Prepare environment
 
 ```bash
 copy .env.example .env
 ```
 
-Then edit `.env` and at least set:
+Minimum required values in `.env`:
 
 ```bash
 DATABASE_URL=postgresql+psycopg://postgres:postgres@localhost:5432/hyperagents
+VITE_API_BASE_URL=http://localhost:8000
 ```
 
-Optional local bootstrap behavior:
+### 2) Start services (recommended)
+
+Windows PowerShell:
+
+```powershell
+./scripts/start-backend.ps1 -Environment dev -RunMigrations
+./scripts/start-frontend.ps1 -Environment dev -Install
+```
+
+Linux/macOS Bash:
 
 ```bash
-AUTO_CREATE_TABLES=true
+./scripts/start-backend.sh --env dev --migrate
+./scripts/start-frontend.sh --env dev --install
 ```
 
-By default, table creation is expected through Alembic migrations.
+Service URLs:
 
-### Frontend
+- Backend: `http://localhost:8000`
+- Frontend: `http://localhost:5173`
 
-```bash
-cd frontend
-npm install
-npm run dev
-```
+## Runtime and Provider Configuration
 
-Frontend runs on `http://localhost:5173`, backend on `http://localhost:8000`.
-
-## Next Milestones
-
-- Persist to PostgreSQL + pgvector
-- Add Redis job queue and runtime workers
-- Integrate real model providers (OpenAI, local vLLM/Ollama)
-- Integrate MCP transport/auth
-- Add execution sandbox (Docker / Firecracker)
-- Add RBAC and org-level collaboration
-
-## Memory Service V1
-
-Memory is now a platform-level service with explicit scope and visibility.
-
-Supported scope and type values:
-
-- `conversation`
-- `project`
-- `agent`
-- `execution`
-- `global`
-
-Visibility values:
-
-- `private`
-- `project`
-- `public`
-
-API:
-
-- `POST /api/v1/memory` store memory
-- `GET /api/v1/memory` search memory with filters
-- `POST /api/v1/memory/semantic-search` hybrid retrieval (vector similarity + importance)
-- `POST /api/v1/memory/retry-embeddings` process pending embedding retry jobs
-
-Core fields:
-
-- `project_id`, `agent_id`, `session_id`, `workflow_run_id`
-- `importance_score` (0~1)
-- `content` (JSON)
-- `embedding_status` (`skipped` / `pending` / `succeeded` / `failed`)
-- `embedding`, `embedding_provider`, `embedding_model`, `embedding_error`
-
-### Semantic Search Request Example
-
-```json
-{
-  "query_embedding": [0.01, 0.02, 0.03],
-  "top_k": 10,
-  "project_id": "<project_id>",
-  "memory_scope": "project",
-  "memory_type": "project",
-  "min_importance": 0.3,
-  "similarity_weight": 0.7
-}
-```
-
-`query_embedding` and stored `embedding` dimensions must match `MEMORY_EMBEDDING_DIMENSIONS` (default 1536).
-
-Result score uses hybrid ranking:
-
-- `hybrid_score = similarity_weight * similarity_score + (1 - similarity_weight) * importance_score`
-
-## Alembic Migrations
-
-Migration files are under `backend/alembic`.
-
-Run migrations:
-
-```bash
-cd backend
-alembic upgrade head
-```
-
-Create a new migration after schema changes:
-
-```bash
-cd backend
-alembic revision --autogenerate -m "describe change"
-```
-
-## LLM Provider Adapter
-
-Runtime now supports unified provider routing via Agent resource configuration.
-
-Supported provider names:
+Supported runtime providers:
 
 - `openai`
-- `localhost` (also aliases: `ollama`, `vllm`)
+- `localhost` (aliases: `ollama`, `vllm`)
 
-Environment variables are now centrally managed in workspace `.env` (template: `.env.example`).
-
-Main LLM-related keys:
+Common environment keys:
 
 ```bash
 OPENAI_API_KEY=<your_key>
@@ -171,52 +73,51 @@ OPENAI_EMBEDDING_MODEL=text-embedding-3-small
 LOCALHOST_LLM_BASE_URL=http://localhost:11434/v1
 LOCALHOST_DEFAULT_MODEL=qwen2.5:7b
 LOCALHOST_EMBEDDING_MODEL=nomic-embed-text
+RUNTIME_DEFAULT_PROVIDER=localhost
 EMBEDDING_PROVIDER=openai
 ```
 
-When sending chat with `agent_id`, runtime reads that Agent resource's `model_provider`, `model_name`, and `config.system_prompt`.
+Notes:
 
-## Automatic Memory Embedding
+- `RUNTIME_DEFAULT_PROVIDER` controls default chat generation route.
+- `EMBEDDING_PROVIDER` controls default memory embedding route.
+- `OPENAI_EMBEDDING_MODEL` must be valid for your configured provider endpoint.
 
-Memory write now supports server-side embedding generation, so clients do not need to pass vectors.
+## Core APIs
 
-`POST /api/v1/memory` payload fields:
+- Project: `POST /api/v1/projects`, `GET /api/v1/projects`
+- Resource: `POST /api/v1/resources/projects/{project_id}`
+- Chat: `POST /api/v1/chat/projects/{project_id}/sessions`
+- Memory: `POST /api/v1/memory`, `POST /api/v1/memory/semantic-search`
+- Registry: `POST /api/v1/registry/projects/{project_id}/{kind}`
 
-- `auto_embedding` (default `true`)
-- `retry_on_embedding_failure` (default `true`)
-- `embedding_provider` (optional override, `openai` / `localhost`)
-- `embedding_model` (optional override)
-- `embedding_input` (optional custom text; defaults to normalized JSON content)
+## Memory V1 Snapshot
 
-When `auto_embedding=true`, backend generates and stores vector automatically.
+- Scope/type values: `conversation`, `project`, `agent`, `execution`, `global`
+- Visibility: `private`, `project`, `public`
+- Embedding status: `skipped`, `pending`, `succeeded`, `failed`
 
-If embedding generation fails:
+Hybrid ranking:
 
-- memory write still succeeds
-- `embedding_status` is set to `failed`
-- retry job is enqueued
-- backend triggers one asynchronous retry pass after response
+- `hybrid_score = similarity_weight * similarity_score + (1 - similarity_weight) * importance_score`
 
-You can also run retries in batch via:
+## Database and Migrations
 
-- `POST /api/v1/memory/retry-embeddings?limit=20`
+```bash
+cd backend
+alembic upgrade head
+```
 
-## Registry APIs (MCP / Tool / Skill)
+Generate migration:
 
-Project-scoped registry creation:
+```bash
+cd backend
+alembic revision --autogenerate -m "describe change"
+```
 
-- `POST /api/v1/registry/projects/{project_id}/mcp`
-- `POST /api/v1/registry/projects/{project_id}/tool`
-- `POST /api/v1/registry/projects/{project_id}/skill`
+## Documentation
 
-Project registry listing with visibility filter:
-
-- `GET /api/v1/registry/projects/{project_id}/mcp?visibility=project`
-- `GET /api/v1/registry/projects/{project_id}/tool?visibility=private`
-- `GET /api/v1/registry/projects/{project_id}/skill?visibility=public`
-
-Public registry listing across projects:
-
-- `GET /api/v1/registry/public/mcp`
-- `GET /api/v1/registry/public/tool`
-- `GET /api/v1/registry/public/skill`
+- [docs/README.md](docs/README.md)
+- [docs/quick-start.zh-en.md](docs/quick-start.zh-en.md)
+- [docs/testing-playbook.zh-en.md](docs/testing-playbook.zh-en.md)
+- [docs/external-resources-integration.zh-en.md](docs/external-resources-integration.zh-en.md)
