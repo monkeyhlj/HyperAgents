@@ -1,0 +1,38 @@
+site_name: HyperAgents Docs
+site_description: HyperAgents project documentation portal
+site_url: https://monkeyhlj.github.io/HyperAgents/
+repo_url: https://github.com/monkeyhlj/HyperAgents
+repo_name: monkeyhlj/HyperAgents
+
+docs_dir: docs
+site_dir: site
+
+theme:
+  name: material
+  language: zh
+  features:
+    - navigation.sections
+    - navigation.expand
+    - content.code.copy
+
+markdown_extensions:
+  - admonition
+  - toc:
+      permalink: true
+  - tables
+  - attr_list
+  - md_in_html
+
+nav:
+  - Home: index.md
+  - Quick Start: quick-start.zh-en.md
+  - Testing Playbook: testing-playbook.zh-en.md
+  - External Integration: external-resources-integration.zh-en.md
+  - Node Docs:
+      - 01 Project and Members: nodes/01-project-and-members.zh-en.md
+      - 02 Resource and Registry: nodes/02-resource-and-registry.zh-en.md
+      - 03 Chat and Runtime: nodes/03-chat-and-runtime.zh-en.md
+      - 04 Memory System: nodes/04-memory-system.zh-en.md
+      - 05 Provider Layer: nodes/05-provider-layer.zh-en.md
+      - 06 Database and Migrations: nodes/06-database-and-migrations.zh-en.md
+  - Docs Portal: README.md
