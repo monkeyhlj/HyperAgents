@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user_id, get_db
-from app.models.enums import ResourceKind
+from app.models.enums import ResourceKind, Visibility
 from app.schemas.resource import Resource, ResourceCreate
 from app.services.postgres_store import store
 
@@ -36,7 +36,8 @@ def create_resource(
 def list_resources(
     project_id: str,
     kind: ResourceKind | None = Query(default=None),
+    visibility: Visibility | None = Query(default=None),
     user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ) -> list[Resource]:
-    return store.list_project_resources(db, project_id, user_id, kind)
+    return store.list_project_resources(db, project_id, user_id, kind, visibility)

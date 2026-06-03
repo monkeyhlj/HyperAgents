@@ -14,3 +14,26 @@ class ResourceKind(StrEnum):
     SKILL = "skill"
     MCP = "mcp"
     KNOWLEDGE_BASE = "knowledge_base"
+
+
+class MemoryType(StrEnum):
+    CONVERSATION = "conversation"
+    PROJECT = "project"
+    AGENT = "agent"
+    EXECUTION = "execution"
+    GLOBAL = "global"
+
+
+class MemoryScope(StrEnum):
+    CONVERSATION = "conversation"
+    PROJECT = "project"
+    AGENT = "agent"
+    EXECUTION = "execution"
+    GLOBAL = "global"
+
+
+class EmbeddingStatus(StrEnum):
+    SKIPPED = "skipped"
+    PENDING = "pending"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"

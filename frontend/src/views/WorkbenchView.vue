@@ -26,6 +26,7 @@
 
 <script setup>
 import { ref } from "vue";
+import { API_BASE_URL } from "../config";
 
 const headers = { "Content-Type": "application/json", "x-user-id": "demo-user" };
 
@@ -38,7 +39,7 @@ const history = ref([]);
 
 async function createSession() {
   const response = await fetch(
-    `http://localhost:8000/api/v1/chat/projects/${projectId.value}/sessions`,
+    `${API_BASE_URL}/api/v1/chat/projects/${projectId.value}/sessions`,
     {
       method: "POST",
       headers,
@@ -52,7 +53,7 @@ async function createSession() {
 
 async function sendMessage() {
   history.value.push({ role: "user", text: message.value });
-  const response = await fetch(`http://localhost:8000/api/v1/chat/sessions/${sessionId.value}/messages`, {
+  const response = await fetch(`${API_BASE_URL}/api/v1/chat/sessions/${sessionId.value}/messages`, {
     method: "POST",
     headers,
     body: JSON.stringify({ text: message.value, agent_id: agentId.value || null })

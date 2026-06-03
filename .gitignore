@@ -5,6 +5,16 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .venv/
+.env
+.env.local
+.env.dev
+.env.staging
+.env.prod
+*.env.local
+backend/.env
+backend/.env.local
+frontend/.env
+frontend/.env.local
 
 # Node
 node_modules/

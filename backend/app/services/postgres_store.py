@@ -99,28 +99,52 @@ class PostgresStore:
         return self._to_resource_schema(resource)
 
     def list_project_resources(
-        self, db: Session, project_id: str, user_id: str, kind: ResourceKind | None
+        self,
+        db: Session,
+        project_id: str,
+        user_id: str,
+        kind: ResourceKind | None,
+        visibility: Visibility | None = None,
     ) -> list[Resource]:
         project = self.assert_project_member(db, project_id, user_id)
 
         stmt = select(ResourceModel).where(ResourceModel.project_id == project_id)
         if kind is not None:
             stmt = stmt.where(ResourceModel.kind == kind.value)
+        if visibility is not None:
+            stmt = stmt.where(ResourceModel.visibility == visibility.value)
 
         candidates = db.scalars(stmt).all()
         result: list[Resource] = []
         for item in candidates:
-            visibility = Visibility(item.visibility)
-            if visibility == Visibility.PUBLIC:
+            item_visibility = Visibility(item.visibility)
+            if item_visibility == Visibility.PUBLIC:
                 result.append(self._to_resource_schema(item))
                 continue
-            if visibility == Visibility.PRIVATE:
+            if item_visibility == Visibility.PRIVATE:
                 if item.owner_id == user_id:
                     result.append(self._to_resource_schema(item))
                 continue
             if user_id == project.owner_id or self._is_member(db, project_id, user_id):
                 result.append(self._to_resource_schema(item))
         return result
+
+    def list_public_resources(
+        self,
+        db: Session,
+        kind: ResourceKind,
+        limit: int = 200,
+    ) -> list[Resource]:
+        stmt = (
+            select(ResourceModel)
+            .where(
+                ResourceModel.kind == kind.value,
+                ResourceModel.visibility == Visibility.PUBLIC.value,
+            )
+            .order_by(ResourceModel.updated_at.desc())
+            .limit(limit)
+        )
+        return [self._to_resource_schema(item) for item in db.scalars(stmt).all()]
 
     def create_chat_session(self, db: Session, project_id: str, user_id: str, title: str) -> dict:
         self.assert_project_member(db, project_id, user_id)
@@ -142,6 +166,21 @@ class PostgresStore:
             raise HTTPException(status_code=404, detail="Chat session not found")
         db.add(ChatMessageModel(session_id=session_id, role=role, text=text))
         db.commit()
+
+    def get_chat_session_for_user(self, db: Session, session_id: str, user_id: str) -> ChatSessionModel:
+        session = db.get(ChatSessionModel, session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="Chat session not found")
+        self.assert_project_member(db, session.project_id, user_id)
+        return session
+
+    def get_agent_resource_for_project(self, db: Session, project_id: str, agent_id: str) -> ResourceModel:
+        resource = db.get(ResourceModel, agent_id)
+        if not resource or resource.project_id != project_id:
+            raise HTTPException(status_code=404, detail="Agent resource not found")
+        if resource.kind != ResourceKind.AGENT.value:
+            raise HTTPException(status_code=400, detail="Provided agent_id is not an agent resource")
+        return resource
 
     def _to_project_schema(self, db: Session, project: ProjectModel) -> Project:
         members_stmt = select(ProjectMemberModel.user_id).where(ProjectMemberModel.project_id == project.id)

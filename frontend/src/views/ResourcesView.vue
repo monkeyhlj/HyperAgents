@@ -40,6 +40,7 @@
 
 <script setup>
 import { ref } from "vue";
+import { API_BASE_URL } from "../config";
 
 const headers = { "Content-Type": "application/json", "x-user-id": "demo-user" };
 
@@ -52,14 +53,14 @@ const modelProvider = ref("");
 const modelName = ref("");
 
 async function loadResources() {
-  const response = await fetch(`http://localhost:8000/api/v1/resources/projects/${projectId.value}`, {
+  const response = await fetch(`${API_BASE_URL}/api/v1/resources/projects/${projectId.value}`, {
     headers
   });
   resources.value = await response.json();
 }
 
 async function createResource() {
-  await fetch(`http://localhost:8000/api/v1/resources/projects/${projectId.value}`, {
+  await fetch(`${API_BASE_URL}/api/v1/resources/projects/${projectId.value}`, {
     method: "POST",
     headers,
     body: JSON.stringify({

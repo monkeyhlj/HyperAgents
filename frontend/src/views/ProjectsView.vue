@@ -19,8 +19,9 @@
 
 <script setup>
 import { onMounted, ref } from "vue";
+import { API_BASE_URL } from "../config";
 
-const api = "http://localhost:8000/api/v1/projects";
+const api = `${API_BASE_URL}/api/v1/projects`;
 const headers = { "Content-Type": "application/json", "x-user-id": "demo-user" };
 
 const name = ref("");

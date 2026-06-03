@@ -1,10 +1,13 @@
 from datetime import datetime
+from datetime import timedelta
 from uuid import uuid4
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, Text
+from sqlalchemy import DateTime, Float, ForeignKey, Index, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
+from pgvector.sqlalchemy import Vector
 
+from app.core.config import settings
 from app.db.base import Base
 
 
@@ -77,3 +80,58 @@ class ChatMessageModel(Base):
     role: Mapped[str] = mapped_column(String(30), nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+class MemoryRecordModel(Base):
+    __tablename__ = "memory_records"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    project_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    agent_id: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    session_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    workflow_run_id: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    memory_scope: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    memory_type: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    visibility: Mapped[str] = mapped_column(String(30), nullable=False, index=True)
+    importance_score: Mapped[float] = mapped_column(Float, default=0.5, nullable=False)
+    content: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    embedding: Mapped[list[float] | None] = mapped_column(
+        Vector(settings.memory_embedding_dimensions),
+        nullable=True,
+    )
+    embedding_status: Mapped[str] = mapped_column(String(30), default="pending", nullable=False, index=True)
+    embedding_provider: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    embedding_model: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    embedding_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_embedding_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_memory_scope_project_created", "memory_scope", "project_id", "created_at"),
+    )
+
+
+class MemoryEmbeddingJobModel(Base):
+    __tablename__ = "memory_embedding_jobs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    memory_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("memory_records.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    status: Mapped[str] = mapped_column(String(30), default="pending", nullable=False, index=True)
+    attempts: Mapped[int] = mapped_column(default=0, nullable=False)
+    max_attempts: Mapped[int] = mapped_column(default=3, nullable=False)
+    next_retry_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.utcnow() + timedelta(seconds=5),
+        nullable=False,
+        index=True,
+    )
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow
+    )
