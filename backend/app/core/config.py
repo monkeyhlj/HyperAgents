@@ -63,6 +63,8 @@ class Settings(BaseModel):
     model_request_timeout_seconds: int = _as_int("MODEL_REQUEST_TIMEOUT_SECONDS", 60)
     embedding_retry_max_attempts: int = _as_int("EMBEDDING_RETRY_MAX_ATTEMPTS", 3)
     embedding_retry_backoff_seconds: int = _as_int("EMBEDDING_RETRY_BACKOFF_SECONDS", 30)
+    auth_secret_key: str = os.getenv("AUTH_SECRET_KEY", "hyperagents-dev-secret")
+    auth_token_expire_minutes: int = _as_int("AUTH_TOKEN_EXPIRE_MINUTES", 60 * 24)
 
 
 settings = Settings()

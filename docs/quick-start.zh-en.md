@@ -38,6 +38,7 @@ cd backend
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
+alembic upgrade 0001_initial_schema
 alembic upgrade head
 uvicorn app.main:app --reload --port 8000
 ```

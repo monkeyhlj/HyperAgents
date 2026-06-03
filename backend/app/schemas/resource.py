@@ -39,3 +39,19 @@ class ChatMessageResponse(BaseModel):
     session_id: str
     role: str
     text: str
+
+
+class ChatSessionRecord(BaseModel):
+    id: str
+    project_id: str
+    title: str
+    owner_id: str
+    created_at: str
+
+
+class ChatMessageRecord(BaseModel):
+    id: str
+    session_id: str
+    role: str
+    text: str
+    created_at: str

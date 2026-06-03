@@ -28,8 +28,9 @@ flowchart LR
 
 1. 快速跑起来 / Get running quickly: [docs/quick-start.zh-en.md](quick-start.zh-en.md)
 2. 端到端联调 / End-to-end API+UI validation: [docs/testing-playbook.zh-en.md](testing-playbook.zh-en.md)
-3. 外部资源接入 / External integration and production setup: [docs/external-resources-integration.zh-en.md](external-resources-integration.zh-en.md)
-4. 理解系统设计 / Understand architecture nodes: [docs/nodes](nodes)
+3. 前端使用说明 / Frontend workbench guide: [docs/frontend-guide.zh-en.md](frontend-guide.zh-en.md)
+4. 外部资源接入 / External integration and production setup: [docs/external-resources-integration.zh-en.md](external-resources-integration.zh-en.md)
+5. 理解系统设计 / Understand architecture nodes: [docs/nodes](nodes)
 
 ## 节点文档 / Node Documents
 

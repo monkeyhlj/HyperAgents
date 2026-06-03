@@ -10,13 +10,66 @@ from app.db.models import (
     ProjectMemberModel,
     ProjectModel,
     ResourceModel,
+    UserModel,
 )
 from app.models.enums import ResourceKind, Visibility
+from app.schemas.auth import UserProfile
 from app.schemas.project import Project
 from app.schemas.resource import Resource
+from app.services.auth_utils import hash_password, verify_password
 
 
 class PostgresStore:
+    def create_user(
+        self,
+        db: Session,
+        username: str,
+        password: str,
+        email: str | None = None,
+        display_name: str | None = None,
+    ) -> UserProfile:
+        normalized_username = username.strip().lower()
+        normalized_email = email.strip().lower() if email else None
+
+        exists_by_username = db.scalar(select(UserModel).where(UserModel.username == normalized_username))
+        if exists_by_username:
+            raise HTTPException(status_code=409, detail="Username already exists")
+
+        if normalized_email:
+            exists_by_email = db.scalar(select(UserModel).where(UserModel.email == normalized_email))
+            if exists_by_email:
+                raise HTTPException(status_code=409, detail="Email already exists")
+
+        user = UserModel(
+            username=normalized_username,
+            email=normalized_email,
+            display_name=display_name.strip() if display_name else normalized_username,
+            hashed_password=hash_password(password),
+            is_active=True,
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        return self._to_user_profile(user)
+
+    def authenticate_user(self, db: Session, account: str, password: str) -> UserProfile:
+        normalized = account.strip().lower()
+        stmt = select(UserModel).where(or_(UserModel.username == normalized, UserModel.email == normalized))
+        user = db.scalar(stmt)
+        if not user:
+            raise HTTPException(status_code=401, detail="Invalid account or password")
+        if not user.is_active:
+            raise HTTPException(status_code=403, detail="User is inactive")
+        if not verify_password(password, user.hashed_password):
+            raise HTTPException(status_code=401, detail="Invalid account or password")
+        return self._to_user_profile(user)
+
+    def get_user_profile(self, db: Session, user_id: str) -> UserProfile:
+        user = db.get(UserModel, user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        return self._to_user_profile(user)
+
     def add_project(self, db: Session, payload_name: str, payload_description: str, owner_id: str) -> Project:
         project = ProjectModel(name=payload_name, description=payload_description, owner_id=owner_id)
         db.add(project)
@@ -33,6 +86,10 @@ class PostgresStore:
         )
         projects = db.scalars(stmt).all()
         return [self._to_project_schema(db, item) for item in projects]
+
+    def get_project_for_user(self, db: Session, project_id: str, user_id: str) -> Project:
+        project = self.assert_project_member(db, project_id, user_id)
+        return self._to_project_schema(db, project)
 
     def get_project(self, db: Session, project_id: str) -> ProjectModel:
         project = db.get(ProjectModel, project_id)
@@ -64,6 +121,24 @@ class PostgresStore:
         exists = db.scalar(member_stmt)
         if not exists:
             db.add(ProjectMemberModel(project_id=project_id, user_id=new_member))
+            project.updated_at = datetime.utcnow()
+            db.commit()
+            db.refresh(project)
+        return self._to_project_schema(db, project)
+
+    def remove_member(self, db: Session, project_id: str, actor: str, target_member: str) -> Project:
+        project = self.get_project(db, project_id)
+        if actor != project.owner_id:
+            raise HTTPException(status_code=403, detail="Only owner can remove members")
+        if target_member == project.owner_id:
+            raise HTTPException(status_code=400, detail="Owner cannot be removed")
+
+        member_stmt = select(ProjectMemberModel).where(
+            and_(ProjectMemberModel.project_id == project_id, ProjectMemberModel.user_id == target_member)
+        )
+        member = db.scalar(member_stmt)
+        if member:
+            db.delete(member)
             project.updated_at = datetime.utcnow()
             db.commit()
             db.refresh(project)
@@ -160,6 +235,26 @@ class PostgresStore:
             "created_at": session.created_at.isoformat(),
         }
 
+    def list_chat_sessions(self, db: Session, project_id: str, user_id: str, limit: int = 50) -> list[dict]:
+        self.assert_project_member(db, project_id, user_id)
+        stmt = (
+            select(ChatSessionModel)
+            .where(ChatSessionModel.project_id == project_id)
+            .order_by(ChatSessionModel.created_at.desc())
+            .limit(limit)
+        )
+        sessions = db.scalars(stmt).all()
+        return [
+            {
+                "id": item.id,
+                "project_id": item.project_id,
+                "title": item.title,
+                "owner_id": item.owner_id,
+                "created_at": item.created_at.isoformat(),
+            }
+            for item in sessions
+        ]
+
     def append_chat_message(self, db: Session, session_id: str, role: str, text: str) -> None:
         session = db.get(ChatSessionModel, session_id)
         if not session:
@@ -173,6 +268,26 @@ class PostgresStore:
             raise HTTPException(status_code=404, detail="Chat session not found")
         self.assert_project_member(db, session.project_id, user_id)
         return session
+
+    def list_chat_messages_for_user(self, db: Session, session_id: str, user_id: str, limit: int = 200) -> list[dict]:
+        session = self.get_chat_session_for_user(db, session_id, user_id)
+        stmt = (
+            select(ChatMessageModel)
+            .where(ChatMessageModel.session_id == session.id)
+            .order_by(ChatMessageModel.created_at.asc())
+            .limit(limit)
+        )
+        messages = db.scalars(stmt).all()
+        return [
+            {
+                "id": item.id,
+                "session_id": item.session_id,
+                "role": item.role,
+                "text": item.text,
+                "created_at": item.created_at.isoformat(),
+            }
+            for item in messages
+        ]
 
     def get_agent_resource_for_project(self, db: Session, project_id: str, agent_id: str) -> ResourceModel:
         resource = db.get(ResourceModel, agent_id)
@@ -216,6 +331,16 @@ class PostgresStore:
             and_(ProjectMemberModel.project_id == project_id, ProjectMemberModel.user_id == user_id)
         )
         return db.scalar(stmt) is not None
+
+    def _to_user_profile(self, user: UserModel) -> UserProfile:
+        return UserProfile(
+            id=user.id,
+            username=user.username,
+            email=user.email,
+            display_name=user.display_name,
+            is_active=user.is_active,
+            created_at=user.created_at,
+        )
 
 
 store = PostgresStore()

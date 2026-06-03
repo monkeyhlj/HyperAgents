@@ -1,12 +1,14 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user_id, get_db
 from app.runtime.executor import runtime_executor
 from app.schemas.resource import (
+    ChatMessageRecord,
     ChatMessageRequest,
     ChatMessageResponse,
     ChatSessionCreate,
+    ChatSessionRecord,
 )
 from app.services.postgres_store import store
 
@@ -22,6 +24,26 @@ def create_chat_session(
     db: Session = Depends(get_db),
 ) -> dict:
     return store.create_chat_session(db, project_id, user_id, payload.title)
+
+
+@router.get("/projects/{project_id}/sessions", response_model=list[ChatSessionRecord])
+def list_chat_sessions(
+    project_id: str,
+    limit: int = Query(default=50, ge=1, le=200),
+    user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    return store.list_chat_sessions(db, project_id, user_id, limit=limit)
+
+
+@router.get("/sessions/{session_id}/messages", response_model=list[ChatMessageRecord])
+def list_chat_messages(
+    session_id: str,
+    limit: int = Query(default=200, ge=1, le=500),
+    user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    return store.list_chat_messages_for_user(db, session_id, user_id, limit=limit)
 
 
 @router.post("/sessions/{session_id}/messages", response_model=ChatMessageResponse)

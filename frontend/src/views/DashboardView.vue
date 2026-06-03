@@ -1,26 +1,43 @@
 <template>
-  <section>
-    <h2>Platform Overview</h2>
-    <p>
-      Project-first architecture with pluggable models, MCP, tools, skills, workflows, and chat testing.
-    </p>
-    <div class="cards">
-      <article class="card">
-        <h3>Project</h3>
-        <p>Root container for collaboration and resource ownership.</p>
-      </article>
-      <article class="card">
-        <h3>Resources</h3>
-        <p>Agent, Workflow, Tool, Skill, MCP, and Knowledge Base.</p>
-      </article>
-      <article class="card">
-        <h3>Runtime</h3>
-        <p>Dedicated execution layer for model calls and orchestration.</p>
-      </article>
-      <article class="card">
-        <h3>Workbench</h3>
-        <p>Project conversation space to test single-agent or multi-agent behavior.</p>
-      </article>
-    </div>
-  </section>
+  <div>
+    <Card class="hero-card" dis-hover>
+      <h2>Welcome, {{ authState.user?.display_name || "Explorer" }}</h2>
+      <p>
+        HyperAgents combines project governance, registry, runtime, and memory into one testable workspace.
+      </p>
+      <Tag color="green">Project-first</Tag>
+      <Tag color="blue">Provider-agnostic</Tag>
+      <Tag color="cyan">Memory-ready</Tag>
+    </Card>
+
+    <Row :gutter="16" class="mt16">
+      <i-col span="6" v-for="item in metrics" :key="item.label">
+        <Card dis-hover>
+          <p class="metric-label">{{ item.label }}</p>
+          <p class="metric-value">{{ item.value }}</p>
+        </Card>
+      </i-col>
+    </Row>
+
+    <Card class="mt16" dis-hover>
+      <template #title>Architecture Pulse</template>
+      <Timeline>
+        <TimelineItem color="green">Projects define visibility and ownership boundaries.</TimelineItem>
+        <TimelineItem color="blue">Resources are loaded by project and executed via runtime.</TimelineItem>
+        <TimelineItem color="cyan">Memory records support semantic retrieval and retry queue.</TimelineItem>
+      </Timeline>
+    </Card>
+  </div>
 </template>
+
+<script setup>
+import { computed } from "vue";
+import { authState } from "../stores/auth";
+
+const metrics = computed(() => [
+  { label: "Current User", value: authState.user?.username || "-" },
+  { label: "Auth Status", value: authState.token ? "Active" : "Missing" },
+  { label: "Frontend", value: "Vue 3 + View UI Plus" },
+  { label: "Backend", value: "FastAPI v1 API" }
+]);
+</script>
