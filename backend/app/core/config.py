@@ -68,6 +68,8 @@ class Settings(BaseModel):
     worker_enabled: bool = _as_bool("WORKER_ENABLED", False)
     worker_broker_url: str = os.getenv("WORKER_BROKER_URL", "redis://localhost:6379/0")
     worker_backend_url: str = os.getenv("WORKER_BACKEND_URL", "redis://localhost:6379/1")
+    code_execution_timeout_seconds: int = _as_int("CODE_EXECUTION_TIMEOUT_SECONDS", 5)
+    code_execution_max_output_chars: int = _as_int("CODE_EXECUTION_MAX_OUTPUT_CHARS", 8000)
 
 
 settings = Settings()

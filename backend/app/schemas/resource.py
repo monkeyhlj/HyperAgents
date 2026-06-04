@@ -40,6 +40,10 @@ class Resource(TimeStampedModel):
     template_id: str | None = None
 
 
+class OwnedResource(Resource):
+    project_name: str
+
+
 class ResourceTemplate(BaseModel):
     template_id: str
     kind: ResourceKind
@@ -107,3 +111,45 @@ class RuntimeRunEventRecord(BaseModel):
     message: str
     payload: dict = Field(default_factory=dict)
     created_at: str
+
+
+class CodeExecutionAuditRecord(BaseModel):
+    run_id: str
+    project_id: str
+    session_id: str
+    user_id: str
+    agent_id: str | None = None
+    status: str
+    duration_ms: int | None = None
+    input_preview: str | None = None
+    error: str | None = None
+    created_at: str
+
+
+class ResourcePreviewChatRequest(BaseModel):
+    project_id: str = Field(min_length=1, max_length=36)
+    text: str = Field(min_length=1, max_length=4000)
+    run_mode: str | None = Field(default=None, max_length=30)
+    model_provider: str | None = Field(default=None, max_length=60)
+    model_name: str | None = Field(default=None, max_length=120)
+    provider_profile: str | None = Field(default=None, max_length=60)
+    system_prompt: str | None = Field(default=None, max_length=8000)
+    custom_code: str | None = None
+    config: dict = Field(default_factory=dict)
+
+
+class ResourcePreviewChatResponse(BaseModel):
+    text: str
+
+
+class CodeVersionRecord(BaseModel):
+    version_id: str
+    note: str
+    code: str
+    created_by: str
+    created_at: str
+
+
+class CodeVersionPublishRequest(BaseModel):
+    note: str | None = Field(default=None, max_length=200)
+    code: str | None = None

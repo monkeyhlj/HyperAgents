@@ -24,9 +24,21 @@
               <Icon type="ios-folder-open" />
               <span>Projects</span>
             </MenuItem>
-            <MenuItem name="resources" @click="goTo('/resources')">
-              <Icon type="ios-cube" />
-              <span>Resources</span>
+            <Submenu name="resources-group">
+              <template #title>
+                <Icon type="ios-cube" />
+                <span>Resources</span>
+              </template>
+              <MenuItem name="resources-overview" @click="goTo('/resources/overview')">Overview</MenuItem>
+              <MenuItem name="resources-agents" @click="goTo('/resources/agents')">Agents</MenuItem>
+              <MenuItem name="resources-tools" @click="goTo('/resources/tools')">Tools</MenuItem>
+              <MenuItem name="resources-skills" @click="goTo('/resources/skills')">Skills</MenuItem>
+              <MenuItem name="resources-mcps" @click="goTo('/resources/mcps')">MCPs</MenuItem>
+              <MenuItem name="resources-knowledge-bases" @click="goTo('/resources/knowledge-bases')">Knowledge</MenuItem>
+            </Submenu>
+            <MenuItem name="workflows" @click="goTo('/workflows')">
+              <Icon type="ios-git-network" />
+              <span>Workflows</span>
             </MenuItem>
             <MenuItem name="workbench" @click="goTo('/workbench')">
               <Icon type="ios-flask" />
@@ -57,7 +69,13 @@ const isLoginPage = computed(() => route.path.startsWith("/login"));
 
 const activeMenu = computed(() => {
   if (route.path.startsWith("/projects")) return "projects";
-  if (route.path.startsWith("/resources")) return "resources";
+  if (route.path.startsWith("/resources/agents")) return "resources-agents";
+  if (route.path.startsWith("/resources/tools")) return "resources-tools";
+  if (route.path.startsWith("/resources/skills")) return "resources-skills";
+  if (route.path.startsWith("/resources/mcps")) return "resources-mcps";
+  if (route.path.startsWith("/resources/knowledge-bases")) return "resources-knowledge-bases";
+  if (route.path.startsWith("/resources")) return "resources-overview";
+  if (route.path.startsWith("/workflows")) return "workflows";
   if (route.path.startsWith("/workbench")) return "workbench";
   return "dashboard";
 });

@@ -1,4 +1,5 @@
 from datetime import datetime
+from uuid import uuid4
 
 from fastapi import HTTPException
 from sqlalchemy import and_, or_, select
@@ -18,7 +19,7 @@ from app.db.models import (
 from app.models.enums import ResourceKind, Visibility
 from app.schemas.auth import UserProfile, UserSearchItem
 from app.schemas.project import Project, ProjectUpdate
-from app.schemas.resource import Resource, ResourceUpdate
+from app.schemas.resource import CodeVersionRecord, OwnedResource, Resource, ResourceUpdate
 from app.services.auth_utils import hash_password, verify_password
 
 
@@ -343,6 +344,10 @@ class PostgresStore:
         db.refresh(resource)
         return self._to_resource_schema(resource)
 
+    def get_resource(self, db: Session, resource_id: str, actor: str) -> Resource:
+        resource = self._get_resource_for_actor(db, resource_id, actor)
+        return self._to_resource_schema(resource)
+
     def delete_resource(self, db: Session, resource_id: str, actor: str) -> None:
         resource = db.get(ResourceModel, resource_id)
         if not resource:
@@ -402,6 +407,53 @@ class PostgresStore:
             .limit(limit)
         )
         return [self._to_resource_schema(item) for item in db.scalars(stmt).all()]
+
+    def list_owned_resources(
+        self,
+        db: Session,
+        user_id: str,
+        kind: ResourceKind | None = None,
+        keyword: str | None = None,
+        project_keyword: str | None = None,
+    ) -> list[OwnedResource]:
+        stmt = (
+            select(ResourceModel, ProjectModel)
+            .join(ProjectModel, ProjectModel.id == ResourceModel.project_id)
+            .where(ResourceModel.owner_id == user_id)
+        )
+
+        if kind is not None:
+            stmt = stmt.where(ResourceModel.kind == kind.value)
+
+        normalized_keyword = (keyword or "").strip()
+        if normalized_keyword:
+            pattern = f"%{normalized_keyword}%"
+            stmt = stmt.where(
+                or_(
+                    ResourceModel.name.ilike(pattern),
+                    ResourceModel.id.ilike(pattern),
+                    ProjectModel.name.ilike(pattern),
+                )
+            )
+
+        normalized_project_keyword = (project_keyword or "").strip()
+        if normalized_project_keyword:
+            project_pattern = f"%{normalized_project_keyword}%"
+            stmt = stmt.where(ProjectModel.name.ilike(project_pattern))
+
+        stmt = stmt.order_by(ResourceModel.updated_at.desc())
+
+        rows = db.execute(stmt).all()
+        result: list[OwnedResource] = []
+        for resource, project in rows:
+            base = self._to_resource_schema(resource)
+            result.append(
+                OwnedResource(
+                    **base.model_dump(),
+                    project_name=project.name,
+                )
+            )
+        return result
 
     def create_chat_session(self, db: Session, project_id: str, user_id: str, title: str) -> dict:
         self.assert_project_member(db, project_id, user_id)
@@ -567,6 +619,120 @@ class PostgresStore:
             for item in events
         ]
 
+    def list_code_execution_audits(
+        self,
+        db: Session,
+        user_id: str,
+        project_id: str | None = None,
+        limit: int = 100,
+    ) -> list[dict]:
+        stmt = (
+            select(RuntimeRunEventModel, RuntimeRunModel)
+            .join(RuntimeRunModel, RuntimeRunModel.id == RuntimeRunEventModel.run_id)
+            .where(RuntimeRunEventModel.stage == "code_execution")
+            .order_by(RuntimeRunEventModel.created_at.desc())
+            .limit(limit)
+        )
+        if project_id:
+            stmt = stmt.where(RuntimeRunModel.project_id == project_id)
+
+        rows = db.execute(stmt).all()
+        result: list[dict] = []
+        for event, run in rows:
+            self.assert_project_member(db, run.project_id, user_id)
+            payload = event.payload or {}
+            result.append(
+                {
+                    "run_id": run.id,
+                    "project_id": run.project_id,
+                    "session_id": run.session_id,
+                    "user_id": run.user_id,
+                    "agent_id": run.agent_id,
+                    "status": event.status,
+                    "duration_ms": payload.get("duration_ms"),
+                    "input_preview": payload.get("input_preview"),
+                    "error": payload.get("error"),
+                    "created_at": event.created_at.isoformat(),
+                }
+            )
+        return result
+
+    def list_resource_code_versions(self, db: Session, resource_id: str, actor: str) -> list[CodeVersionRecord]:
+        resource = self._get_resource_for_actor(db, resource_id, actor)
+        versions = list((resource.config or {}).get("code_versions") or [])
+        versions.sort(key=lambda item: item.get("created_at", ""), reverse=True)
+        return [
+            CodeVersionRecord(
+                version_id=str(item.get("version_id") or ""),
+                note=str(item.get("note") or ""),
+                code=str(item.get("code") or ""),
+                created_by=str(item.get("created_by") or ""),
+                created_at=str(item.get("created_at") or ""),
+            )
+            for item in versions
+            if item.get("version_id")
+        ]
+
+    def publish_resource_code_version(
+        self,
+        db: Session,
+        resource_id: str,
+        actor: str,
+        note: str | None = None,
+        code: str | None = None,
+    ) -> list[CodeVersionRecord]:
+        resource = self._get_resource_for_actor(db, resource_id, actor)
+        config = dict(resource.config or {})
+
+        source_code = (code if code is not None else config.get("custom_code") or "").strip()
+        if not source_code:
+            raise HTTPException(status_code=400, detail="No code to publish")
+
+        version = {
+            "version_id": str(uuid4()),
+            "note": (note or "publish").strip() or "publish",
+            "code": source_code,
+            "created_by": actor,
+            "created_at": datetime.utcnow().isoformat(),
+        }
+
+        versions = list(config.get("code_versions") or [])
+        versions.append(version)
+        config["code_versions"] = versions
+        config["custom_code"] = source_code
+        config["run_mode"] = "code"
+        config["published_version_id"] = version["version_id"]
+
+        resource.config = config
+        resource.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(resource)
+        return self.list_resource_code_versions(db, resource_id, actor)
+
+    def rollback_resource_code_version(
+        self,
+        db: Session,
+        resource_id: str,
+        version_id: str,
+        actor: str,
+    ) -> list[CodeVersionRecord]:
+        resource = self._get_resource_for_actor(db, resource_id, actor)
+        config = dict(resource.config or {})
+        versions = list(config.get("code_versions") or [])
+
+        target = next((item for item in versions if item.get("version_id") == version_id), None)
+        if not target:
+            raise HTTPException(status_code=404, detail="Code version not found")
+
+        config["custom_code"] = str(target.get("code") or "")
+        config["run_mode"] = "code"
+        config["published_version_id"] = version_id
+        resource.config = config
+        resource.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(resource)
+        return self.list_resource_code_versions(db, resource_id, actor)
+
     def get_chat_session_for_user(self, db: Session, session_id: str, user_id: str) -> ChatSessionModel:
         session = db.get(ChatSessionModel, session_id)
         if not session:
@@ -635,6 +801,16 @@ class PostgresStore:
             member_managers=member_managers,
             member_manager_names=[to_name(item) for item in member_managers],
         )
+
+    def _get_resource_for_actor(self, db: Session, resource_id: str, actor: str) -> ResourceModel:
+        resource = db.get(ResourceModel, resource_id)
+        if not resource:
+            raise HTTPException(status_code=404, detail="Resource not found")
+
+        project = self.assert_project_member(db, resource.project_id, actor)
+        if actor != project.owner_id and actor != resource.owner_id:
+            raise HTTPException(status_code=403, detail="No permission to edit resource")
+        return resource
 
     def _to_resource_schema(self, resource: ResourceModel) -> Resource:
         return Resource(
