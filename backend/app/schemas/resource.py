@@ -11,7 +11,18 @@ class ResourceCreate(BaseModel):
     visibility: Visibility = Visibility.PROJECT
     model_provider: str | None = Field(default=None, max_length=60)
     model_name: str | None = Field(default=None, max_length=120)
+    provider_profile: str | None = Field(default=None, max_length=60)
     config: dict = Field(default_factory=dict)
+
+
+class ResourceUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=2, max_length=120)
+    description: str | None = Field(default=None, max_length=1000)
+    visibility: Visibility | None = None
+    model_provider: str | None = Field(default=None, max_length=60)
+    model_name: str | None = Field(default=None, max_length=120)
+    provider_profile: str | None = Field(default=None, max_length=60)
+    config: dict | None = None
 
 
 class Resource(TimeStampedModel):
@@ -23,6 +34,21 @@ class Resource(TimeStampedModel):
     visibility: Visibility
     model_provider: str | None = None
     model_name: str | None = None
+    provider_profile: str | None = None
+    config: dict = Field(default_factory=dict)
+    source: str = "custom"
+    template_id: str | None = None
+
+
+class ResourceTemplate(BaseModel):
+    template_id: str
+    kind: ResourceKind
+    name: str
+    description: str
+    visibility: Visibility
+    model_provider: str | None = None
+    model_name: str | None = None
+    provider_profile: str | None = None
     config: dict = Field(default_factory=dict)
 
 

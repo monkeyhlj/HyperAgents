@@ -21,17 +21,29 @@ Chat is the test entry: create session first, then send messages. Optionally pas
 Runtime 会读取 Agent 资源中的：
 - `model_provider`
 - `model_name`
+- `provider_profile`（如果模板/资源配置了该字段）
 - `config.system_prompt`
 
 然后路由到对应 Provider 执行。
+
+如果 Agent 来源于默认模板：
+- 模板定义保存在 `backend/app/core/default_resources.json`
+- 用户在前端选择模板后，会创建成数据库中的项目资源
+- 运行时仍然读取数据库中的资源配置执行，不直接执行 JSON 模板
 
 English:
 Runtime reads from Agent resource:
 - `model_provider`
 - `model_name`
+- `provider_profile` (if configured on the template/resource)
 - `config.system_prompt`
 
 Then dispatches to the corresponding provider.
+
+If the Agent comes from a default template:
+- The template definition lives in `backend/app/core/default_resources.json`
+- Selecting a template in the UI creates a project resource in the database
+- Runtime still executes the DB resource, not the raw JSON template
 
 ## 代码位置 / Code References
 

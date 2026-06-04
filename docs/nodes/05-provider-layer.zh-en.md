@@ -33,6 +33,28 @@ All configuration is read from workspace-root `.env` (template: `.env.example`).
 - `EMBEDDING_PROVIDER`
 - `MODEL_REQUEST_TIMEOUT_SECONDS`
 
+### provider_profile 规则 / provider_profile Convention
+
+中文：
+- 默认模板或资源可以带 `provider_profile`，用于映射环境变量前缀。
+- 例如 `provider_profile=zhipu` 时，后端读取 `ZHIPU_API_KEY`、`ZHIPU_BASE_URL`、`ZHIPU_DEFAULT_MODEL`。
+- `model_provider` 只表示运行时客户端类型，不存放真实密钥。
+
+English:
+- Default templates or resources can carry `provider_profile` to map env-variable prefixes.
+- For example, `provider_profile=zhipu` makes the backend read `ZHIPU_API_KEY`, `ZHIPU_BASE_URL`, and `ZHIPU_DEFAULT_MODEL`.
+- `model_provider` only indicates the runtime client type; it does not store secrets.
+
+### 默认模板文件 / Default Template File
+
+中文：
+- 默认模板文件位于 `backend/app/core/default_resources.json`。
+- 这里适合放“可展示、可选择”的默认 Agent 模板，不适合放真实 API Key。
+
+English:
+- The default template file is `backend/app/core/default_resources.json`.
+- It is suitable for displayable/selectable Agent templates, not for real API keys.
+
 ## 执行路径 / Execution Flow
 
 中文：

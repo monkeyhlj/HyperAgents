@@ -85,11 +85,32 @@ copy .env.example .env
 ./scripts/start-frontend.ps1 -Environment dev -Install
 ```
 
+3. Optional but recommended: enable Worker queue mode for async retry tasks.
+
+```bash
+# in .env
+WORKER_ENABLED=true
+WORKER_BROKER_URL=redis://localhost:6379/0
+WORKER_BACKEND_URL=redis://localhost:6379/1
+
+# start celery worker
+cd backend
+.venv\Scripts\activate
+celery -A app.workers.celery_app.celery_app worker -l info
+```
+
+Notes:
+
+- Runtime Run timeline does not require extra process startup. It is created automatically by chat message execution.
+- Worker is required only when you need enqueue=true queue dispatch.
+- If worker/redis is unavailable, retry endpoints will fallback to API process execution.
+
 For detailed setup, see:
 
 - [README.en.md](README.en.md)
 - [README.zh.md](README.zh.md)
 - [docs/guides/quick-start.zh-en.md](docs/guides/quick-start.zh-en.md)
+- [docs/guides/runtime-run-worker.zh-en.md](docs/guides/runtime-run-worker.zh-en.md)
 
 ## Documentation Index
 

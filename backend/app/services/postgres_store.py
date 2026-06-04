@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.db.models import (
     ChatMessageModel,
     ChatSessionModel,
+    ProjectMemberPermissionModel,
     ProjectMemberModel,
     ProjectModel,
     ResourceModel,
@@ -15,9 +16,9 @@ from app.db.models import (
     UserModel,
 )
 from app.models.enums import ResourceKind, Visibility
-from app.schemas.auth import UserProfile
-from app.schemas.project import Project
-from app.schemas.resource import Resource
+from app.schemas.auth import UserProfile, UserSearchItem
+from app.schemas.project import Project, ProjectUpdate
+from app.schemas.resource import Resource, ResourceUpdate
 from app.services.auth_utils import hash_password, verify_password
 
 
@@ -72,6 +73,28 @@ class PostgresStore:
             raise HTTPException(status_code=404, detail="User not found")
         return self._to_user_profile(user)
 
+    def search_users(self, db: Session, q: str, limit: int = 10) -> list[UserSearchItem]:
+        keyword = q.strip().lower()
+        if not keyword:
+            return []
+        pattern = f"%{keyword}%"
+        stmt = (
+            select(UserModel)
+            .where(
+                or_(
+                    UserModel.username.ilike(pattern),
+                    UserModel.display_name.ilike(pattern),
+                )
+            )
+            .order_by(UserModel.username.asc())
+            .limit(limit)
+        )
+        users = db.scalars(stmt).all()
+        return [
+            UserSearchItem(id=item.id, username=item.username, display_name=item.display_name)
+            for item in users
+        ]
+
     def add_project(self, db: Session, payload_name: str, payload_description: str, owner_id: str) -> Project:
         project = ProjectModel(name=payload_name, description=payload_description, owner_id=owner_id)
         db.add(project)
@@ -79,11 +102,33 @@ class PostgresStore:
         db.refresh(project)
         return self._to_project_schema(db, project)
 
+    def update_project(self, db: Session, project_id: str, actor: str, payload: ProjectUpdate) -> Project:
+        project = self.get_project(db, project_id)
+        if actor != project.owner_id:
+            raise HTTPException(status_code=403, detail="Only owner can edit project")
+
+        if payload.name is not None:
+            project.name = payload.name
+        if payload.description is not None:
+            project.description = payload.description
+        project.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(project)
+        return self._to_project_schema(db, project)
+
+    def delete_project(self, db: Session, project_id: str, actor: str) -> None:
+        project = self.get_project(db, project_id)
+        if actor != project.owner_id:
+            raise HTTPException(status_code=403, detail="Only owner can delete project")
+        db.delete(project)
+        db.commit()
+
     def list_projects(self, db: Session, user_id: str) -> list[Project]:
+        identifiers = self._member_identifiers(db, user_id)
         stmt = (
             select(ProjectModel)
             .outerjoin(ProjectMemberModel, ProjectMemberModel.project_id == ProjectModel.id)
-            .where(or_(ProjectModel.owner_id == user_id, ProjectMemberModel.user_id == user_id))
+            .where(or_(ProjectModel.owner_id == user_id, ProjectMemberModel.user_id.in_(identifiers)))
             .distinct()
         )
         projects = db.scalars(stmt).all()
@@ -103,26 +148,37 @@ class PostgresStore:
         project = self.get_project(db, project_id)
         if user_id == project.owner_id:
             return project
+        identifiers = self._member_identifiers(db, user_id)
         member_stmt = select(ProjectMemberModel).where(
-            and_(ProjectMemberModel.project_id == project_id, ProjectMemberModel.user_id == user_id)
+            and_(ProjectMemberModel.project_id == project_id, ProjectMemberModel.user_id.in_(identifiers))
         )
         member = db.scalar(member_stmt)
         if not member:
             raise HTTPException(status_code=403, detail="No access to project")
         return project
 
-    def add_member(self, db: Session, project_id: str, actor: str, new_member: str) -> Project:
+    def add_member(
+        self,
+        db: Session,
+        project_id: str,
+        actor: str,
+        new_member: str | None = None,
+        account: str | None = None,
+    ) -> Project:
         project = self.get_project(db, project_id)
-        if actor != project.owner_id:
-            raise HTTPException(status_code=403, detail="Only owner can add members")
-        if new_member == project.owner_id:
+        if actor != project.owner_id and not self._can_add_members(db, project_id, actor):
+            raise HTTPException(status_code=403, detail="No permission to add members")
+
+        resolved_member = self._resolve_user_id(db, new_member=new_member, account=account)
+        if resolved_member == project.owner_id:
             return self._to_project_schema(db, project)
+
         member_stmt = select(ProjectMemberModel).where(
-            and_(ProjectMemberModel.project_id == project_id, ProjectMemberModel.user_id == new_member)
+            and_(ProjectMemberModel.project_id == project_id, ProjectMemberModel.user_id == resolved_member)
         )
         exists = db.scalar(member_stmt)
         if not exists:
-            db.add(ProjectMemberModel(project_id=project_id, user_id=new_member))
+            db.add(ProjectMemberModel(project_id=project_id, user_id=resolved_member))
             project.updated_at = datetime.utcnow()
             db.commit()
             db.refresh(project)
@@ -141,6 +197,80 @@ class PostgresStore:
         member = db.scalar(member_stmt)
         if member:
             db.delete(member)
+            perm_stmt = select(ProjectMemberPermissionModel).where(
+                and_(
+                    ProjectMemberPermissionModel.project_id == project_id,
+                    ProjectMemberPermissionModel.user_id == target_member,
+                )
+            )
+            permission_row = db.scalar(perm_stmt)
+            if permission_row:
+                db.delete(permission_row)
+            project.updated_at = datetime.utcnow()
+            db.commit()
+            db.refresh(project)
+        return self._to_project_schema(db, project)
+
+    def grant_member_manager(
+        self,
+        db: Session,
+        project_id: str,
+        actor: str,
+        manager_user_id: str | None = None,
+        account: str | None = None,
+    ) -> Project:
+        project = self.get_project(db, project_id)
+        if actor != project.owner_id:
+            raise HTTPException(status_code=403, detail="Only owner can grant member manager")
+
+        resolved_member = self._resolve_user_id(db, new_member=manager_user_id, account=account)
+        if resolved_member == project.owner_id:
+            return self._to_project_schema(db, project)
+
+        permission_stmt = select(ProjectMemberPermissionModel).where(
+            and_(
+                ProjectMemberPermissionModel.project_id == project_id,
+                ProjectMemberPermissionModel.user_id == resolved_member,
+            )
+        )
+        permission_row = db.scalar(permission_stmt)
+        if permission_row:
+            permission_row.can_add_members = True
+        else:
+            db.add(
+                ProjectMemberPermissionModel(
+                    project_id=project_id,
+                    user_id=resolved_member,
+                    can_add_members=True,
+                )
+            )
+
+        if not db.scalar(
+            select(ProjectMemberModel).where(
+                and_(ProjectMemberModel.project_id == project_id, ProjectMemberModel.user_id == resolved_member)
+            )
+        ):
+            db.add(ProjectMemberModel(project_id=project_id, user_id=resolved_member))
+
+        project.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(project)
+        return self._to_project_schema(db, project)
+
+    def revoke_member_manager(self, db: Session, project_id: str, actor: str, manager_user_id: str) -> Project:
+        project = self.get_project(db, project_id)
+        if actor != project.owner_id:
+            raise HTTPException(status_code=403, detail="Only owner can revoke member manager")
+
+        permission_stmt = select(ProjectMemberPermissionModel).where(
+            and_(
+                ProjectMemberPermissionModel.project_id == project_id,
+                ProjectMemberPermissionModel.user_id == manager_user_id,
+            )
+        )
+        permission_row = db.scalar(permission_stmt)
+        if permission_row:
+            db.delete(permission_row)
             project.updated_at = datetime.utcnow()
             db.commit()
             db.refresh(project)
@@ -157,8 +287,12 @@ class PostgresStore:
         visibility: Visibility,
         model_provider: str | None,
         model_name: str | None,
+        provider_profile: str | None,
         config: dict,
     ) -> Resource:
+        resource_config = dict(config or {})
+        if provider_profile:
+            resource_config["provider_profile"] = provider_profile
         resource = ResourceModel(
             project_id=project_id,
             owner_id=owner_id,
@@ -168,12 +302,58 @@ class PostgresStore:
             visibility=visibility.value,
             model_provider=model_provider,
             model_name=model_name,
-            config=config,
+            config=resource_config,
         )
         db.add(resource)
         db.commit()
         db.refresh(resource)
         return self._to_resource_schema(resource)
+
+    def update_resource(self, db: Session, resource_id: str, actor: str, payload: ResourceUpdate) -> Resource:
+        resource = db.get(ResourceModel, resource_id)
+        if not resource:
+            raise HTTPException(status_code=404, detail="Resource not found")
+
+        project = self.assert_project_member(db, resource.project_id, actor)
+        if actor != project.owner_id and actor != resource.owner_id:
+            raise HTTPException(status_code=403, detail="No permission to edit resource")
+
+        if payload.name is not None:
+            resource.name = payload.name
+        if payload.description is not None:
+            resource.description = payload.description
+        if payload.visibility is not None:
+            resource.visibility = payload.visibility.value
+        if payload.model_provider is not None:
+            resource.model_provider = payload.model_provider
+        if payload.model_name is not None:
+            resource.model_name = payload.model_name
+
+        config = dict(resource.config or {})
+        if payload.config is not None:
+            config = dict(payload.config)
+        if payload.provider_profile is not None:
+            if payload.provider_profile:
+                config["provider_profile"] = payload.provider_profile
+            else:
+                config.pop("provider_profile", None)
+        resource.config = config
+        resource.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(resource)
+        return self._to_resource_schema(resource)
+
+    def delete_resource(self, db: Session, resource_id: str, actor: str) -> None:
+        resource = db.get(ResourceModel, resource_id)
+        if not resource:
+            raise HTTPException(status_code=404, detail="Resource not found")
+
+        project = self.assert_project_member(db, resource.project_id, actor)
+        if actor != project.owner_id and actor != resource.owner_id:
+            raise HTTPException(status_code=403, detail="No permission to delete resource")
+
+        db.delete(resource)
+        db.commit()
 
     def list_project_resources(
         self,
@@ -425,6 +605,23 @@ class PostgresStore:
     def _to_project_schema(self, db: Session, project: ProjectModel) -> Project:
         members_stmt = select(ProjectMemberModel.user_id).where(ProjectMemberModel.project_id == project.id)
         members = list(db.scalars(members_stmt).all())
+        manager_stmt = select(ProjectMemberPermissionModel.user_id).where(
+            and_(
+                ProjectMemberPermissionModel.project_id == project.id,
+                ProjectMemberPermissionModel.can_add_members.is_(True),
+            )
+        )
+        member_managers = list(db.scalars(manager_stmt).all())
+
+        identifiers = {project.owner_id, *members, *member_managers}
+        users_stmt = select(UserModel).where(or_(UserModel.id.in_(identifiers), UserModel.username.in_(identifiers)))
+        users = db.scalars(users_stmt).all()
+        username_by_id = {item.id: item.username for item in users}
+        username_by_username = {item.username: item.username for item in users}
+
+        def to_name(identifier: str) -> str:
+            return username_by_id.get(identifier) or username_by_username.get(identifier) or identifier
+
         return Project(
             id=project.id,
             created_at=project.created_at,
@@ -432,7 +629,11 @@ class PostgresStore:
             name=project.name,
             description=project.description,
             owner_id=project.owner_id,
+            owner_name=to_name(project.owner_id),
             members=members,
+            member_names=[to_name(item) for item in members],
+            member_managers=member_managers,
+            member_manager_names=[to_name(item) for item in member_managers],
         )
 
     def _to_resource_schema(self, resource: ResourceModel) -> Resource:
@@ -448,14 +649,51 @@ class PostgresStore:
             visibility=Visibility(resource.visibility),
             model_provider=resource.model_provider,
             model_name=resource.model_name,
+            provider_profile=(resource.config or {}).get("provider_profile"),
             config=resource.config,
+            source="custom",
+            template_id=None,
         )
 
     def _is_member(self, db: Session, project_id: str, user_id: str) -> bool:
+        identifiers = self._member_identifiers(db, user_id)
         stmt = select(ProjectMemberModel.id).where(
-            and_(ProjectMemberModel.project_id == project_id, ProjectMemberModel.user_id == user_id)
+            and_(ProjectMemberModel.project_id == project_id, ProjectMemberModel.user_id.in_(identifiers))
         )
         return db.scalar(stmt) is not None
+
+    def _can_add_members(self, db: Session, project_id: str, user_id: str) -> bool:
+        identifiers = self._member_identifiers(db, user_id)
+        stmt = select(ProjectMemberPermissionModel.id).where(
+            and_(
+                ProjectMemberPermissionModel.project_id == project_id,
+                ProjectMemberPermissionModel.user_id.in_(identifiers),
+                ProjectMemberPermissionModel.can_add_members.is_(True),
+            )
+        )
+        return db.scalar(stmt) is not None
+
+    def _resolve_user_id(self, db: Session, new_member: str | None, account: str | None) -> str:
+        if new_member:
+            user = db.get(UserModel, new_member.strip())
+            if user:
+                return user.id
+
+        candidate = (account or new_member or "").strip().lower()
+        if not candidate:
+            raise HTTPException(status_code=400, detail="user_id or account is required")
+
+        stmt = select(UserModel).where(or_(UserModel.username == candidate, UserModel.email == candidate))
+        user = db.scalar(stmt)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        return user.id
+
+    def _member_identifiers(self, db: Session, user_id: str) -> list[str]:
+        user = db.get(UserModel, user_id)
+        if not user:
+            return [user_id]
+        return [user.id, user.username]
 
     def _to_user_profile(self, user: UserModel) -> UserProfile:
         return UserProfile(

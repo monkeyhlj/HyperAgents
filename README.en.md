@@ -83,13 +83,64 @@ Notes:
 - `EMBEDDING_PROVIDER` controls default memory embedding route.
 - `OPENAI_EMBEDDING_MODEL` must be valid for your configured provider endpoint.
 
+Provider profile convention:
+
+- `provider_profile` is the credential prefix, for example `zhipu`.
+- The backend reads matching env vars with the same prefix: `ZHIPU_API_KEY`, `ZHIPU_BASE_URL`, `ZHIPU_DEFAULT_MODEL`.
+- To add `claude`, configure `CLAUDE_API_KEY`, `CLAUDE_BASE_URL`, and `CLAUDE_DEFAULT_MODEL`.
+
+## Runtime Run and Worker
+
+Runtime Run (runs + events) records execution timeline for each chat request. It is generated automatically by chat message execution and does not require a separate runtime process.
+
+Worker mode (Celery + Redis) is used for async embedding retry dispatch and is optional:
+
+- For local development, worker can be skipped (fallback runs in API process).
+- To validate queue mode (`enqueue=true`), Redis and Celery worker must be running.
+
+Recommended worker settings:
+
+```bash
+WORKER_ENABLED=true
+WORKER_BROKER_URL=redis://localhost:6379/0
+WORKER_BACKEND_URL=redis://localhost:6379/1
+```
+
+Start worker:
+
+```bash
+cd backend
+.venv\Scripts\activate
+celery -A app.workers.celery_app.celery_app worker -l info
+```
+
+Quick validation:
+
+1. Send message via `POST /api/v1/chat/sessions/{session_id}/messages`
+2. Query runs via `GET /api/v1/chat/sessions/{session_id}/runs`
+3. Query events via `GET /api/v1/chat/runs/{run_id}/events`
+4. Trigger queue retry via `POST /api/v1/memory/retry-embeddings?limit=20&enqueue=true`
+
+Result interpretation:
+
+- `queued=true`: task enqueued successfully and `task_id` is present.
+- `queued=false`: queue unavailable, request fallback executed in API process.
+
 ## Core APIs
 
 - Project: `POST /api/v1/projects`, `GET /api/v1/projects`
+- Project update/delete: `PATCH /api/v1/projects/{project_id}`, `DELETE /api/v1/projects/{project_id}`
+- Project members: `POST /api/v1/projects/{project_id}/members`, `DELETE /api/v1/projects/{project_id}/members/{member_id}`
+- Project member managers: `POST /api/v1/projects/{project_id}/member-managers`, `DELETE /api/v1/projects/{project_id}/member-managers/{member_id}`
 - Resource: `POST /api/v1/resources/projects/{project_id}`
 - Chat: `POST /api/v1/chat/projects/{project_id}/sessions`
 - Memory: `POST /api/v1/memory`, `POST /api/v1/memory/semantic-search`
 - Registry: `POST /api/v1/registry/projects/{project_id}/{kind}`
+
+Membership rule summary:
+
+- owner can add/remove members.
+- delegated member manager can add members, but cannot remove members.
 
 ## Memory V1 Snapshot
 

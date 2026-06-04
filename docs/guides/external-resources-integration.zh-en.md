@@ -1,6 +1,6 @@
 # External Resources Integration Guide (中文 + English)
 
-导航 / Navigation: [返回项目首页](../README.md) | [文档首页](README.md) | [中文 README](../README.zh.md) | [English README](../README.en.md)
+导航 / Navigation: [返回项目首页](../../README.md) | [文档首页](../README.md) | [中文 README](../../README.zh.md) | [English README](../../README.en.md)
 
 ## 你应该优先接入什么 / What to Add First
 
@@ -55,6 +55,16 @@ Recommended priority:
   }
 }
 ```
+
+### 默认模板文件 / Default Resource Templates
+
+系统默认资源模板保存在：`backend/app/core/default_resources.json`
+
+- 这里只放模板，不放真实密钥。
+- 前端会把默认模板展示为可选项，用户选择后再创建为项目资源。
+- 模板中的 `provider_profile` 用于映射环境变量前缀，例如 `zhipu` -> `ZHIPU_API_KEY`、`ZHIPU_BASE_URL`、`ZHIPU_DEFAULT_MODEL`。
+
+If you need a new provider, add a new template entry here and provide the matching env-prefix credentials in `.env`.
 
 ## 二、如何添加 Tool / Skill / MCP / KB
 

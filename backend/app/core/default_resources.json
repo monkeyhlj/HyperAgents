@@ -1,0 +1,15 @@
+[
+  {
+    "template_id": "agent-zhipu-default",
+    "kind": "agent",
+    "name": "Zhipu Assistant",
+    "description": "Default Zhipu-compatible assistant template. Requires ZHIPU_API_KEY and ZHIPU_BASE_URL from .env.",
+    "visibility": "project",
+    "model_provider": "zhipu",
+    "model_name": "glm-5.1",
+    "provider_profile": "zhipu",
+    "config": {
+      "system_prompt": "You are a helpful AI assistant."
+    }
+  }
+]

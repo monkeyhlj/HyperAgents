@@ -1,6 +1,6 @@
 # Quick Start (中文 + English)
 
-导航 / Navigation: [返回项目首页](../README.md) | [文档首页](README.md) | [中文 README](../README.zh.md) | [English README](../README.en.md)
+导航 / Navigation: [返回项目首页](../../README.md) | [文档首页](../README.md) | [中文 README](../../README.zh.md) | [English README](../../README.en.md)
 
 ## 1) 先理解这是什么 / What this project is
 
@@ -28,6 +28,11 @@ English:
 4. Start backend
 5. Start frontend
 
+补充 / Add-on:
+
+- Runtime Run timeline is produced automatically after Chat message calls.
+- Celery worker is optional for basic startup, but recommended for async retry tasks.
+
 ## 3) 后端命令 / Backend Commands
 
 ```powershell
@@ -43,12 +48,44 @@ alembic upgrade head
 uvicorn app.main:app --reload --port 8000
 ```
 
+说明 / Notes:
+
+- Runtime Run does not require extra process startup; it is generated in the backend API process.
+- Worker queue mode requires Redis + Celery worker process.
+
 ## 4) 前端命令 / Frontend Commands
 
 ```powershell
 cd frontend
 npm install
 npm run dev
+```
+
+## 4.1) Worker（可选但推荐） / Worker (Optional but Recommended)
+
+中文：
+
+- 如果只做本地联调，可以先不启 worker（系统会回退到 API 进程执行重试）。
+- 如果要验证 enqueue=true 的排队能力，必须启动 Redis 和 Celery worker。
+
+English:
+
+- For basic local development, worker can be skipped (fallback runs in API process).
+- To validate enqueue=true queue mode, Redis and Celery worker must be running.
+
+```powershell
+# 1) Ensure .env includes worker settings
+# WORKER_ENABLED=true
+# WORKER_BROKER_URL=redis://localhost:6379/0
+# WORKER_BACKEND_URL=redis://localhost:6379/1
+
+# 2) Start Redis (example, if installed as Windows service)
+# redis-server
+
+# 3) Start Celery worker
+cd backend
+.venv\Scripts\activate
+celery -A app.workers.celery_app.celery_app worker -l info
 ```
 
 ## 5) 必要环境变量 / Required Environment Variables
@@ -68,7 +105,15 @@ LOCALHOST_EMBEDDING_MODEL=nomic-embed-text
 RUNTIME_DEFAULT_PROVIDER=localhost
 EMBEDDING_PROVIDER=openai
 VITE_API_BASE_URL=http://localhost:8000
+WORKER_ENABLED=false
+WORKER_BROKER_URL=redis://localhost:6379/0
+WORKER_BACKEND_URL=redis://localhost:6379/1
 
+新增 provider 的约定 / Provider profile convention:
+
+- `provider_profile` 作为凭据前缀名，比如 `zhipu`。
+- 后端会读取同前缀的环境变量：`ZHIPU_API_KEY`、`ZHIPU_BASE_URL`、`ZHIPU_DEFAULT_MODEL`。
+- 如果新增 `claude`，就配置 `CLAUDE_API_KEY`、`CLAUDE_BASE_URL`、`CLAUDE_DEFAULT_MODEL`。
 
 OPENAI_API_KEY
 作用：OpenAI 兼容接口的鉴权密钥。
@@ -116,6 +161,21 @@ EMBEDDING_PROVIDER
 VITE_API_BASE_URL
 作用：前端调用后端 API 的基础地址。
 怎么配：本地开发一般 http://localhost:8000；部署后改成线上 API 域名。
+
+WORKER_ENABLED
+作用：是否启用队列模式执行 embedding retry。
+可选：true 或 false。
+怎么配：开发期可先 false；需要验证排队模式时设为 true。
+
+WORKER_BROKER_URL / WORKER_BACKEND_URL
+作用：Celery 的 broker/result backend 地址（通常 Redis）。
+怎么配：本地无密码 Redis 可用 redis://localhost:6379/0 与 /1；有密码时写成 redis://:password@host:6379/0。
+
+default_resources.json
+作用：系统默认资源模板文件，当前用于提供可选的默认 Agent 模板。
+位置：backend/app/core/default_resources.json
+怎么配：只放模板信息，不放真实密钥；真实凭据仍然从 .env 读取。
+约定：模板里可写 provider_profile，例如 zhipu，后端会读取同前缀的 ZHIPU_API_KEY、ZHIPU_BASE_URL、ZHIPU_DEFAULT_MODEL。
 ```
 
 中文：
@@ -137,6 +197,68 @@ English:
 
 English:
 Open `http://localhost:8000/health`; expected response is `{"status":"ok"}`.
+
+## 6.1) Runtime Run 验证 / Runtime Run Validation
+
+中文：
+
+1. 注册/登录拿到 access token
+2. 创建 project -> 创建 chat session
+3. 发送消息到 /api/v1/chat/sessions/{session_id}/messages
+4. 查询 /api/v1/chat/sessions/{session_id}/runs
+5. 查询 /api/v1/chat/runs/{run_id}/events
+
+期望：
+
+- runs 至少有 1 条新记录
+- events 至少包含 runtime running 与 runtime succeeded/failed
+
+English:
+
+1. Register/login and get access token
+2. Create project -> create chat session
+3. Send message to /api/v1/chat/sessions/{session_id}/messages
+4. Query /api/v1/chat/sessions/{session_id}/runs
+5. Query /api/v1/chat/runs/{run_id}/events
+
+Expected:
+
+- at least one new run record
+- runtime running and runtime succeeded/failed events exist
+
+## 6.2) Worker 排队验证 / Worker Queue Validation
+
+```powershell
+curl -X POST "http://localhost:8000/api/v1/memory/retry-embeddings?limit=20&enqueue=true" -H "Authorization: Bearer <access_token>"
+```
+
+结果解释 / Result interpretation:
+
+- queued=true: task successfully enqueued, task_id should be non-empty.
+- queued=false: worker not enabled/reachable, request falls back to API process execution.
+
+## 6.3) 项目成员权限验证 / Project Membership Permission Validation
+
+中文：
+
+1. owner 创建项目
+2. owner 添加普通成员 A（`POST /api/v1/projects/{project_id}/members`）
+3. owner 授予 A 添加成员权限（`POST /api/v1/projects/{project_id}/member-managers`）
+4. 使用 A 的账号添加成员 B（应成功）
+5. 使用 A 的账号删除成员 B（应返回 403）
+
+English:
+
+1. owner creates a project
+2. owner adds member A (`POST /api/v1/projects/{project_id}/members`)
+3. owner grants A add-member permission (`POST /api/v1/projects/{project_id}/member-managers`)
+4. use A to add member B (should succeed)
+5. use A to remove member B (should return 403)
+
+说明 / Notes:
+
+- `member_managers` is returned in project payloads.
+- Only owner can remove members and revoke delegated permissions.
 
 ## 7) 一键启动（按环境） / One-command Startup by Environment
 

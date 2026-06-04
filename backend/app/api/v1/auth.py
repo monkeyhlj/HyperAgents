@@ -1,8 +1,8 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user_id, get_db
-from app.schemas.auth import TokenResponse, UserLoginRequest, UserProfile, UserRegisterRequest
+from app.schemas.auth import TokenResponse, UserLoginRequest, UserProfile, UserRegisterRequest, UserSearchItem
 from app.services.auth_utils import create_access_token
 from app.services.postgres_store import store
 
@@ -36,3 +36,14 @@ def current_user_profile(
     db: Session = Depends(get_db),
 ) -> UserProfile:
     return store.get_user_profile(db, user_id)
+
+
+@router.get("/users/search", response_model=list[UserSearchItem])
+def search_users(
+    q: str = Query(min_length=1, max_length=80),
+    limit: int = Query(default=10, ge=1, le=50),
+    user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+) -> list[UserSearchItem]:
+    _ = user_id
+    return store.search_users(db, q=q, limit=limit)

@@ -57,7 +57,7 @@
           <Input v-model="message" placeholder="Type your prompt" style="width: 500px" @on-enter="sendMessage" />
         </FormItem>
         <FormItem>
-          <Button type="success" :disabled="!sessionId" :loading="sending" @click="sendMessage">Send</Button>
+          <Button type="success" :loading="sending" @click="sendMessage">Send</Button>
         </FormItem>
       </Form>
     </Card>
@@ -319,8 +319,8 @@ async function openRun(runId) {
 }
 
 async function sendMessage() {
-  if (!sessionId.value) {
-    Message.warning("Please create a session first");
+  if (!selectedProject.value) {
+    Message.warning("Please select a project first");
     return;
   }
   if (!message.value.trim()) {
@@ -328,10 +328,16 @@ async function sendMessage() {
   }
 
   sending.value = true;
-  history.value.push({ role: "user", text: message.value });
+  const textToSend = message.value;
+  history.value.push({ role: "user", text: textToSend });
   try {
+    if (!sessionId.value) {
+      const created = await api.createSession(selectedProject.value.id, sessionTitle.value || "default");
+      sessionId.value = created.id;
+      await loadSessions();
+    }
     const data = await api.sendMessage(sessionId.value, {
-      text: message.value,
+      text: textToSend,
       agent_id: agentId.value || null
     });
     history.value.push({ role: data.role, text: data.text });

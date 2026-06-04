@@ -94,11 +94,13 @@ def send_message(
 
     model_provider: str | None = None
     model_name: str | None = None
+    provider_profile: str | None = None
     system_prompt: str | None = None
     if payload.agent_id:
         agent_resource = store.get_agent_resource_for_project(db, session.project_id, payload.agent_id)
         model_provider = agent_resource.model_provider
         model_name = agent_resource.model_name
+        provider_profile = (agent_resource.config or {}).get("provider_profile")
         system_prompt = (agent_resource.config or {}).get("system_prompt")
         store.append_runtime_run_event(
             db=db,
@@ -119,6 +121,7 @@ def send_message(
             payload.text,
             model_provider=model_provider,
             model_name=model_name,
+            provider_profile=provider_profile,
             system_prompt=system_prompt,
         )
         store.append_chat_message(db, session_id, role="assistant", text=answer)

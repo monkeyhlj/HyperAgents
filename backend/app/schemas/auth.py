@@ -24,6 +24,12 @@ class UserProfile(BaseModel):
     created_at: datetime
 
 
+class UserSearchItem(BaseModel):
+    id: str
+    username: str
+    display_name: str
+
+
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"

@@ -37,6 +37,20 @@ flowchart LR
 9. 外部资源接入 / External integration and production setup: [docs/guides/external-resources-integration.zh-en.md](guides/external-resources-integration.zh-en.md)
 10. 理解系统设计 / Understand architecture nodes: [docs/nodes](nodes)
 
+## 默认资源模板规范 / Default Resource Template Convention
+
+系统默认资源模板保存在 `backend/app/core/default_resources.json`。
+
+- 这里只放模板信息，不放真实密钥。
+- 当前默认模板用于提供可选的 Agent 模板，用户选择后再创建为项目资源。
+- 模板中的 `provider_profile` 用于映射环境变量前缀，例如 `zhipu` -> `ZHIPU_API_KEY`、`ZHIPU_BASE_URL`、`ZHIPU_DEFAULT_MODEL`。
+- 新增 provider 时，优先新增模板，再补对应前缀的 `.env` 变量。
+
+相关说明：
+
+- [快速开始 / Quick Start](guides/quick-start.zh-en.md)
+- [外部资源接入 / External Resources Integration](guides/external-resources-integration.zh-en.md)
+
 ## 节点文档 / Node Documents
 
 1. [docs/nodes/01-project-and-members.zh-en.md](nodes/01-project-and-members.zh-en.md): Project 与成员权限 / Project and membership

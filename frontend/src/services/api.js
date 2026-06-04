@@ -52,6 +52,9 @@ export const api = {
   me() {
     return request("/api/v1/auth/me");
   },
+  searchUsers(queryText, limit = 10) {
+    return request(withQuery("/api/v1/auth/users/search", { q: queryText, limit }));
+  },
   listProjects() {
     return request("/api/v1/projects");
   },
@@ -64,10 +67,21 @@ export const api = {
       body: JSON.stringify(payload)
     });
   },
-  addProjectMember(projectId, userId) {
+  updateProject(projectId, payload) {
+    return request(`/api/v1/projects/${projectId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload)
+    });
+  },
+  deleteProject(projectId) {
+    return request(`/api/v1/projects/${projectId}`, {
+      method: "DELETE"
+    });
+  },
+  addProjectMember(projectId, payload) {
     return request(`/api/v1/projects/${projectId}/members`, {
       method: "POST",
-      body: JSON.stringify({ user_id: userId })
+      body: JSON.stringify(payload)
     });
   },
   removeProjectMember(projectId, memberId) {
@@ -75,16 +89,41 @@ export const api = {
       method: "DELETE"
     });
   },
+  grantProjectMemberManager(projectId, payload) {
+    return request(`/api/v1/projects/${projectId}/member-managers`, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+  },
+  revokeProjectMemberManager(projectId, memberId) {
+    return request(`/api/v1/projects/${projectId}/member-managers/${memberId}`, {
+      method: "DELETE"
+    });
+  },
   listResources(projectId, query = {}) {
     return request(withQuery(`/api/v1/resources/projects/${projectId}`, query));
   },
+  listDefaultResources(query = {}) {
+    return request(withQuery("/api/v1/resources/defaults", query));
+  },
   listProjectAgents(projectId) {
-    return request(withQuery(`/api/v1/resources/projects/${projectId}`, { kind: "agent" }));
+    return request(withQuery(`/api/v1/resources/projects/${projectId}`, { kind: "agent", include_defaults: false }));
   },
   createResource(projectId, payload) {
     return request(`/api/v1/resources/projects/${projectId}`, {
       method: "POST",
       body: JSON.stringify(payload)
+    });
+  },
+  updateResource(resourceId, payload) {
+    return request(`/api/v1/resources/${resourceId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload)
+    });
+  },
+  deleteResource(resourceId) {
+    return request(`/api/v1/resources/${resourceId}`, {
+      method: "DELETE"
     });
   },
   createSession(projectId, title) {

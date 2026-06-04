@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
+import re
 
 import httpx
 from openai import OpenAI
@@ -20,13 +22,30 @@ class ProviderClient:
         raise NotImplementedError
 
 
+def _normalize_env_prefix(value: str) -> str:
+    normalized = re.sub(r"[^A-Za-z0-9]+", "_", value.strip()).strip("_")
+    return normalized.upper()
+
+
+def _env(name: str, default: str | None = None) -> str | None:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value
+
+
 class OpenAIProviderClient(ProviderClient):
-    def __init__(self) -> None:
-        self._client = OpenAI(api_key=settings.openai_api_key, base_url=settings.openai_base_url)
+    def __init__(self, profile_name: str = "openai") -> None:
+        self._profile_name = profile_name
+        self._env_prefix = _normalize_env_prefix(profile_name)
+        self._api_key = _env(f"{self._env_prefix}_API_KEY", settings.openai_api_key)
+        self._base_url = _env(f"{self._env_prefix}_BASE_URL", settings.openai_base_url)
+        self._default_model = _env(f"{self._env_prefix}_DEFAULT_MODEL", settings.openai_default_model)
+        self._client = OpenAI(api_key=self._api_key, base_url=self._base_url)
 
     def generate(self, request: ChatGenerationRequest) -> str:
-        if not settings.openai_api_key and not settings.openai_base_url:
-            raise RuntimeError("OPENAI_API_KEY is not configured")
+        if not self._api_key and not self._base_url:
+            raise RuntimeError(f"{self._env_prefix}_API_KEY is not configured")
 
         messages: list[dict[str, str]] = []
         if request.system_prompt:
@@ -65,13 +84,13 @@ class LocalhostProviderClient(ProviderClient):
 
 
 class ProviderFactory:
-    def get_client(self, provider_name: str) -> ProviderClient:
+    def get_client(self, provider_name: str, provider_profile: str | None = None) -> ProviderClient:
         normalized = provider_name.strip().lower()
         if normalized == "openai":
-            return OpenAIProviderClient()
+            return OpenAIProviderClient(profile_name=provider_profile or "openai")
         if normalized in {"localhost", "ollama", "vllm"}:
             return LocalhostProviderClient()
-        raise ValueError(f"Unsupported model provider: {provider_name}")
+        return OpenAIProviderClient(profile_name=provider_profile or provider_name)
 
 
 provider_factory = ProviderFactory()
