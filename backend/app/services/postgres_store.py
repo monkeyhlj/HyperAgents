@@ -10,6 +10,8 @@ from app.db.models import (
     ProjectMemberModel,
     ProjectModel,
     ResourceModel,
+    RuntimeRunEventModel,
+    RuntimeRunModel,
     UserModel,
 )
 from app.models.enums import ResourceKind, Visibility
@@ -261,6 +263,129 @@ class PostgresStore:
             raise HTTPException(status_code=404, detail="Chat session not found")
         db.add(ChatMessageModel(session_id=session_id, role=role, text=text))
         db.commit()
+
+    def create_runtime_run(
+        self,
+        db: Session,
+        session: ChatSessionModel,
+        user_id: str,
+        input_text: str,
+        agent_id: str | None,
+    ) -> RuntimeRunModel:
+        run = RuntimeRunModel(
+            project_id=session.project_id,
+            session_id=session.id,
+            user_id=user_id,
+            agent_id=agent_id,
+            status="running",
+            input_text=input_text,
+            started_at=datetime.utcnow(),
+        )
+        db.add(run)
+        db.commit()
+        db.refresh(run)
+        return run
+
+    def append_runtime_run_event(
+        self,
+        db: Session,
+        run_id: str,
+        stage: str,
+        status: str,
+        message: str,
+        payload: dict | None = None,
+    ) -> None:
+        event = RuntimeRunEventModel(
+            run_id=run_id,
+            stage=stage,
+            status=status,
+            message=message,
+            payload=payload or {},
+        )
+        db.add(event)
+        db.commit()
+
+    def finish_runtime_run(
+        self,
+        db: Session,
+        run_id: str,
+        status: str,
+        output_text: str | None = None,
+        error: str | None = None,
+    ) -> None:
+        run = db.get(RuntimeRunModel, run_id)
+        if not run:
+            raise HTTPException(status_code=404, detail="Run not found")
+        run.status = status
+        run.output_text = output_text
+        run.error = error
+        run.finished_at = datetime.utcnow()
+        db.commit()
+
+    def list_runtime_runs_for_session(
+        self,
+        db: Session,
+        session_id: str,
+        user_id: str,
+        limit: int = 100,
+    ) -> list[dict]:
+        session = self.get_chat_session_for_user(db, session_id, user_id)
+        stmt = (
+            select(RuntimeRunModel)
+            .where(RuntimeRunModel.session_id == session.id)
+            .order_by(RuntimeRunModel.created_at.desc())
+            .limit(limit)
+        )
+        runs = db.scalars(stmt).all()
+        return [
+            {
+                "id": item.id,
+                "project_id": item.project_id,
+                "session_id": item.session_id,
+                "user_id": item.user_id,
+                "agent_id": item.agent_id,
+                "status": item.status,
+                "input_text": item.input_text,
+                "output_text": item.output_text,
+                "error": item.error,
+                "started_at": item.started_at.isoformat(),
+                "finished_at": item.finished_at.isoformat() if item.finished_at else None,
+                "created_at": item.created_at.isoformat(),
+            }
+            for item in runs
+        ]
+
+    def list_runtime_run_events(
+        self,
+        db: Session,
+        run_id: str,
+        user_id: str,
+        limit: int = 500,
+    ) -> list[dict]:
+        run = db.get(RuntimeRunModel, run_id)
+        if not run:
+            raise HTTPException(status_code=404, detail="Run not found")
+        self.assert_project_member(db, run.project_id, user_id)
+
+        stmt = (
+            select(RuntimeRunEventModel)
+            .where(RuntimeRunEventModel.run_id == run_id)
+            .order_by(RuntimeRunEventModel.created_at.asc())
+            .limit(limit)
+        )
+        events = db.scalars(stmt).all()
+        return [
+            {
+                "id": item.id,
+                "run_id": item.run_id,
+                "stage": item.stage,
+                "status": item.status,
+                "message": item.message,
+                "payload": item.payload,
+                "created_at": item.created_at.isoformat(),
+            }
+            for item in events
+        ]
 
     def get_chat_session_for_user(self, db: Session, session_id: str, user_id: str) -> ChatSessionModel:
         session = db.get(ChatSessionModel, session_id)

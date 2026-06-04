@@ -26,11 +26,16 @@ flowchart LR
 
 ## 按目标阅读 / Read by Goal
 
-1. 快速跑起来 / Get running quickly: [docs/quick-start.zh-en.md](quick-start.zh-en.md)
-2. 端到端联调 / End-to-end API+UI validation: [docs/testing-playbook.zh-en.md](testing-playbook.zh-en.md)
-3. 前端使用说明 / Frontend workbench guide: [docs/frontend-guide.zh-en.md](frontend-guide.zh-en.md)
-4. 外部资源接入 / External integration and production setup: [docs/external-resources-integration.zh-en.md](external-resources-integration.zh-en.md)
-5. 理解系统设计 / Understand architecture nodes: [docs/nodes](nodes)
+1. 快速跑起来 / Get running quickly: [docs/guides/quick-start.zh-en.md](guides/quick-start.zh-en.md)
+2. 端到端联调 / End-to-end API+UI validation: [docs/guides/testing-playbook.zh-en.md](guides/testing-playbook.zh-en.md)
+3. 前端使用说明 / Frontend workbench guide: [docs/guides/frontend-guide.zh-en.md](guides/frontend-guide.zh-en.md)
+4. 架构演进路线 / Architecture roadmap: [docs/reference/architecture-roadmap.zh-en.md](reference/architecture-roadmap.zh-en.md)
+5. Runtime 与 Worker 详细说明 / Runtime run and worker guide: [docs/guides/runtime-run-worker.zh-en.md](guides/runtime-run-worker.zh-en.md)
+6. API 变更日志 / API changelog: [docs/reference/api-changelog.zh-en.md](reference/api-changelog.zh-en.md)
+7. 部署与运维手册 / Deployment and operations guide: [docs/operations/deployment-operations.zh-en.md](operations/deployment-operations.zh-en.md)
+8. 按角色阅读 / Role-based reading guide: [docs/roles/roles-overview.zh-en.md](roles/roles-overview.zh-en.md)
+9. 外部资源接入 / External integration and production setup: [docs/guides/external-resources-integration.zh-en.md](guides/external-resources-integration.zh-en.md)
+10. 理解系统设计 / Understand architecture nodes: [docs/nodes](nodes)
 
 ## 节点文档 / Node Documents
 
@@ -59,7 +64,9 @@ flowchart TD
 
 - Project-first domain model and visibility rules
 - Runtime provider routing for chat and embedding
+- Runtime run timeline (runs + events)
 - Memory write/search, semantic retrieval, retry queue
+- Worker-ready embedding retry dispatch (enqueue + fallback)
 - Registry lifecycle for MCP/Tool/Skill
 - Migration-based schema evolution with Alembic
 - Multi-environment configuration and startup scripts

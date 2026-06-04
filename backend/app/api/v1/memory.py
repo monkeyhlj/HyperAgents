@@ -13,6 +13,7 @@ from app.schemas.memory import (
     MemorySemanticSearchResponse,
 )
 from app.services.memory_store import memory_store
+from app.workers.dispatcher import enqueue_embedding_retry
 
 
 router = APIRouter()
@@ -32,7 +33,9 @@ def create_memory(
 ) -> MemoryRecord:
     memory = memory_store.create_memory(db, payload, user_id)
     if payload.auto_embedding and payload.retry_on_embedding_failure and memory.embedding_status.value == "failed":
-        background_tasks.add_task(_run_background_embedding_retry, 1)
+        dispatch = enqueue_embedding_retry(limit=1)
+        if not dispatch.queued:
+            background_tasks.add_task(_run_background_embedding_retry, 1)
     return memory
 
 
@@ -81,9 +84,21 @@ def semantic_search_memory(
 @router.post("/retry-embeddings", response_model=MemoryRetryResponse)
 def retry_embeddings(
     limit: int = Query(default=20, ge=1, le=200),
+    enqueue: bool = Query(default=False),
     user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ) -> MemoryRetryResponse:
     _ = user_id
+    if enqueue:
+        dispatch = enqueue_embedding_retry(limit=limit)
+        if dispatch.queued:
+            return MemoryRetryResponse(
+                processed=0,
+                succeeded=0,
+                failed=0,
+                queued=True,
+                task_id=dispatch.task_id,
+                message="Embedding retry task enqueued",
+            )
     result = memory_store.process_pending_embedding_jobs(db, limit=limit)
-    return MemoryRetryResponse(**result)
+    return MemoryRetryResponse(**result, queued=False, message="Embedding retry executed in API process")

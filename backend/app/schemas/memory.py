@@ -73,3 +73,6 @@ class MemoryRetryResponse(BaseModel):
     processed: int
     succeeded: int
     failed: int
+    queued: bool = False
+    task_id: str | None = None
+    message: str | None = None

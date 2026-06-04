@@ -25,6 +25,17 @@ export async function request(path, options = {}) {
   return data;
 }
 
+function withQuery(path, query = {}) {
+  const params = new URLSearchParams();
+  Object.entries(query).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== "") {
+      params.set(key, String(value));
+    }
+  });
+  const text = params.toString();
+  return text ? `${path}?${text}` : path;
+}
+
 export const api = {
   register(payload) {
     return request("/api/v1/auth/register", {
@@ -64,8 +75,11 @@ export const api = {
       method: "DELETE"
     });
   },
-  listResources(projectId) {
-    return request(`/api/v1/resources/projects/${projectId}`);
+  listResources(projectId, query = {}) {
+    return request(withQuery(`/api/v1/resources/projects/${projectId}`, query));
+  },
+  listProjectAgents(projectId) {
+    return request(withQuery(`/api/v1/resources/projects/${projectId}`, { kind: "agent" }));
   },
   createResource(projectId, payload) {
     return request(`/api/v1/resources/projects/${projectId}`, {
@@ -81,6 +95,12 @@ export const api = {
   },
   listSessions(projectId) {
     return request(`/api/v1/chat/projects/${projectId}/sessions`);
+  },
+  listRuns(sessionId) {
+    return request(`/api/v1/chat/sessions/${sessionId}/runs`);
+  },
+  listRunEvents(runId) {
+    return request(`/api/v1/chat/runs/${runId}/events`);
   },
   sendMessage(sessionId, payload) {
     return request(`/api/v1/chat/sessions/${sessionId}/messages`, {

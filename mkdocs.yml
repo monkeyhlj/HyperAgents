@@ -25,9 +25,19 @@ markdown_extensions:
 
 nav:
   - Home: index.md
-  - Quick Start: quick-start.zh-en.md
-  - Testing Playbook: testing-playbook.zh-en.md
-  - External Integration: external-resources-integration.zh-en.md
+  - Quick Start: guides/quick-start.zh-en.md
+  - Role-based Reading: roles/roles-overview.zh-en.md
+  - Developer Playbook: roles/developer-playbook.zh-en.md
+  - QA Playbook: roles/qa-playbook.zh-en.md
+  - Ops Playbook: roles/ops-playbook.zh-en.md
+  - PM Playbook: roles/pm-playbook.zh-en.md
+  - Frontend Guide: guides/frontend-guide.zh-en.md
+  - Runtime Run and Worker: guides/runtime-run-worker.zh-en.md
+  - API Changelog: reference/api-changelog.zh-en.md
+  - Deployment and Operations: operations/deployment-operations.zh-en.md
+  - Testing Playbook: guides/testing-playbook.zh-en.md
+  - Architecture Roadmap: reference/architecture-roadmap.zh-en.md
+  - External Integration: guides/external-resources-integration.zh-en.md
   - Node Docs:
       - 01 Project and Members: nodes/01-project-and-members.zh-en.md
       - 02 Resource and Registry: nodes/02-resource-and-registry.zh-en.md

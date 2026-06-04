@@ -118,6 +118,6 @@ alembic revision --autogenerate -m "describe change"
 ## Documentation
 
 - [docs/README.md](docs/README.md)
-- [docs/quick-start.zh-en.md](docs/quick-start.zh-en.md)
-- [docs/testing-playbook.zh-en.md](docs/testing-playbook.zh-en.md)
-- [docs/external-resources-integration.zh-en.md](docs/external-resources-integration.zh-en.md)
+- [docs/guides/quick-start.zh-en.md](docs/guides/quick-start.zh-en.md)
+- [docs/guides/testing-playbook.zh-en.md](docs/guides/testing-playbook.zh-en.md)
+- [docs/guides/external-resources-integration.zh-en.md](docs/guides/external-resources-integration.zh-en.md)

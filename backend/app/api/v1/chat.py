@@ -9,6 +9,8 @@ from app.schemas.resource import (
     ChatMessageResponse,
     ChatSessionCreate,
     ChatSessionRecord,
+    RuntimeRunEventRecord,
+    RuntimeRunRecord,
 )
 from app.services.postgres_store import store
 
@@ -46,6 +48,26 @@ def list_chat_messages(
     return store.list_chat_messages_for_user(db, session_id, user_id, limit=limit)
 
 
+@router.get("/sessions/{session_id}/runs", response_model=list[RuntimeRunRecord])
+def list_runtime_runs(
+    session_id: str,
+    limit: int = Query(default=100, ge=1, le=500),
+    user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    return store.list_runtime_runs_for_session(db, session_id, user_id, limit=limit)
+
+
+@router.get("/runs/{run_id}/events", response_model=list[RuntimeRunEventRecord])
+def list_runtime_run_events(
+    run_id: str,
+    limit: int = Query(default=500, ge=1, le=1000),
+    user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    return store.list_runtime_run_events(db, run_id, user_id, limit=limit)
+
+
 @router.post("/sessions/{session_id}/messages", response_model=ChatMessageResponse)
 def send_message(
     session_id: str,
@@ -54,6 +76,21 @@ def send_message(
     db: Session = Depends(get_db),
 ) -> ChatMessageResponse:
     session = store.get_chat_session_for_user(db, session_id, user_id)
+    run = store.create_runtime_run(
+        db=db,
+        session=session,
+        user_id=user_id,
+        input_text=payload.text,
+        agent_id=payload.agent_id,
+    )
+    store.append_runtime_run_event(
+        db=db,
+        run_id=run.id,
+        stage="runtime",
+        status="running",
+        message="Runtime execution started",
+        payload={"session_id": session.id},
+    )
 
     model_provider: str | None = None
     model_name: str | None = None
@@ -63,13 +100,59 @@ def send_message(
         model_provider = agent_resource.model_provider
         model_name = agent_resource.model_name
         system_prompt = (agent_resource.config or {}).get("system_prompt")
+        store.append_runtime_run_event(
+            db=db,
+            run_id=run.id,
+            stage="agent",
+            status="selected",
+            message="Agent selected for runtime",
+            payload={
+                "agent_id": payload.agent_id,
+                "model_provider": model_provider,
+                "model_name": model_name,
+            },
+        )
 
-    store.append_chat_message(db, session_id, role="user", text=payload.text)
-    answer = runtime_executor.run_chat(
-        payload.text,
-        model_provider=model_provider,
-        model_name=model_name,
-        system_prompt=system_prompt,
-    )
-    store.append_chat_message(db, session_id, role="assistant", text=answer)
-    return ChatMessageResponse(session_id=session_id, role="assistant", text=answer)
+    try:
+        store.append_chat_message(db, session_id, role="user", text=payload.text)
+        answer = runtime_executor.run_chat(
+            payload.text,
+            model_provider=model_provider,
+            model_name=model_name,
+            system_prompt=system_prompt,
+        )
+        store.append_chat_message(db, session_id, role="assistant", text=answer)
+        store.finish_runtime_run(
+            db=db,
+            run_id=run.id,
+            status="succeeded",
+            output_text=answer,
+            error=None,
+        )
+        store.append_runtime_run_event(
+            db=db,
+            run_id=run.id,
+            stage="runtime",
+            status="succeeded",
+            message="Runtime execution completed",
+            payload={"output_length": len(answer)},
+        )
+        return ChatMessageResponse(session_id=session_id, role="assistant", text=answer, run_id=run.id)
+    except Exception as exc:
+        error_text = str(exc)
+        store.finish_runtime_run(
+            db=db,
+            run_id=run.id,
+            status="failed",
+            output_text=None,
+            error=error_text,
+        )
+        store.append_runtime_run_event(
+            db=db,
+            run_id=run.id,
+            stage="runtime",
+            status="failed",
+            message="Runtime execution failed",
+            payload={"error": error_text},
+        )
+        raise

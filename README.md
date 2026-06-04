@@ -7,7 +7,7 @@
 
 <p align="center">
 	<a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-red.svg" alt="License"/></a>
-	<a href="https://blog.csdn.net/hhhmonkey"><img src="https://img.shields.io/badge/Author-monkeyhlj-orange.svg" alt="Author"/></a>
+	<a href="https://github.com/monkeyhlj"><img src="https://img.shields.io/badge/Author-monkeyhlj-orange.svg" alt="Author"/></a>
 	<a href="https://blog.csdn.net/hhhmonkey"><img src="https://img.shields.io/badge/Blog-CSDN-blue.svg" alt="Blog"/></a>
 	<a href="https://github.com/monkeyhlj/HyperAgents"><img src="https://img.shields.io/badge/version-0.1.0-brightgreen.svg" alt="Version"/></a>
 	<a href="https://github.com/monkeyhlj/HyperAgents/issues"><img src="https://img.shields.io/github/issues/monkeyhlj/HyperAgents" alt="GitHub issues"/></a>
@@ -89,13 +89,13 @@ For detailed setup, see:
 
 - [README.en.md](README.en.md)
 - [README.zh.md](README.zh.md)
-- [docs/quick-start.zh-en.md](docs/quick-start.zh-en.md)
+- [docs/guides/quick-start.zh-en.md](docs/guides/quick-start.zh-en.md)
 
 ## Documentation Index
 
 - [docs/README.md](docs/README.md)
-- [docs/testing-playbook.zh-en.md](docs/testing-playbook.zh-en.md)
-- [docs/external-resources-integration.zh-en.md](docs/external-resources-integration.zh-en.md)
+- [docs/guides/testing-playbook.zh-en.md](docs/guides/testing-playbook.zh-en.md)
+- [docs/guides/external-resources-integration.zh-en.md](docs/guides/external-resources-integration.zh-en.md)
 
 ## Current Status
 

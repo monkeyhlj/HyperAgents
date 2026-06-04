@@ -39,6 +39,7 @@ class ChatMessageResponse(BaseModel):
     session_id: str
     role: str
     text: str
+    run_id: str | None = None
 
 
 class ChatSessionRecord(BaseModel):
@@ -54,4 +55,29 @@ class ChatMessageRecord(BaseModel):
     session_id: str
     role: str
     text: str
+    created_at: str
+
+
+class RuntimeRunRecord(BaseModel):
+    id: str
+    project_id: str
+    session_id: str
+    user_id: str
+    agent_id: str | None = None
+    status: str
+    input_text: str
+    output_text: str | None = None
+    error: str | None = None
+    started_at: str
+    finished_at: str | None = None
+    created_at: str
+
+
+class RuntimeRunEventRecord(BaseModel):
+    id: str
+    run_id: str
+    stage: str
+    status: str
+    message: str
+    payload: dict = Field(default_factory=dict)
     created_at: str

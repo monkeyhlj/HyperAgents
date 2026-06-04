@@ -1,6 +1,6 @@
 # Testing Playbook (中文 + English)
 
-导航 / Navigation: [返回项目首页](../README.md) | [文档首页](README.md) | [中文 README](../README.zh.md) | [English README](../README.en.md)
+导航 / Navigation: [返回项目首页](../../README.md) | [文档首页](../README.md) | [中文 README](../../README.zh.md) | [English README](../../README.en.md)
 
 ## A. 最小可用测试 / Minimum Viable Test
 
@@ -19,6 +19,10 @@ cd backend
 .venv\Scripts\activate
 alembic upgrade head
 ```
+
+说明 / Notes:
+- 最新迁移包含 users 及 runtime_runs/runtime_run_events。
+- 若未迁移到 head，Workbench 的 Run Timeline 会为空或报错。
 
 ### Step 3: 启动后端 / Start backend
 
@@ -98,6 +102,8 @@ curl -X POST "$API_BASE_URL/api/v1/chat/sessions/{session_id}/messages" -H "Cont
 ```powershell
 curl "$API_BASE_URL/api/v1/chat/projects/{project_id}/sessions" -H "Authorization: Bearer <access_token>"
 curl "$API_BASE_URL/api/v1/chat/sessions/{session_id}/messages" -H "Authorization: Bearer <access_token>"
+curl "$API_BASE_URL/api/v1/chat/sessions/{session_id}/runs" -H "Authorization: Bearer <access_token>"
+curl "$API_BASE_URL/api/v1/chat/runs/{run_id}/events" -H "Authorization: Bearer <access_token>"
 ```
 
 ### 4.2) Add and remove project member
@@ -128,6 +134,23 @@ Note: query_embedding dimensions must match configuration.
 curl -X POST "$API_BASE_URL/api/v1/memory/retry-embeddings?limit=20" -H "Authorization: Bearer <access_token>"
 ```
 
+若已启用 Worker，也可排队执行：
+If worker is enabled, you can enqueue the retry task:
+
+```powershell
+curl -X POST "$API_BASE_URL/api/v1/memory/retry-embeddings?limit=20&enqueue=true" -H "Authorization: Bearer <access_token>"
+```
+
+### 8) Worker startup check (optional)
+
+```powershell
+cd backend
+.venv\Scripts\activate
+celery -A app.workers.celery_app.celery_app worker -l info
+```
+
+启动后可再次触发 enqueue=true，验证返回中 queued=true 且 task_id 不为空。
+
 ## C. 前端手工测试 / Frontend Manual Test
 
 1. 确认 `.env` 中 `VITE_API_BASE_URL` 指向后端地址
@@ -142,6 +165,8 @@ curl -X POST "$API_BASE_URL/api/v1/memory/retry-embeddings?limit=20" -H "Authori
 
 - `401 Invalid token`: 未登录或 Authorization 头缺失/过期
 - `403 No access to project`: 当前用户不是项目 owner/member
+- `relation "runtime_runs" does not exist`: 未执行最新 Alembic 迁移
 - `embedding generation failed`: provider 配置错误或模型服务不可达
 - `query_embedding dimension must be ...`: 向量维度不匹配
 - `vector extension` error: PostgreSQL 未安装/启用 pgvector
+- `enqueue=true but queued=false`: Worker 未启用或 Redis/Celery 不可用，系统已回退到 API 进程执行
