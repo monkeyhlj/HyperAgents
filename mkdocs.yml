@@ -39,7 +39,7 @@ nav:
   - Testing Playbook: guides/testing-playbook.zh-en.md
   - Architecture Roadmap: reference/architecture-roadmap.zh-en.md
   - External Integration: guides/external-resources-integration.zh-en.md
-    - Module Docs:
+  - Module Docs:
       - Projects: modules/projects.zh-en.md
       - Resources: modules/resources.zh-en.md
       - Agents: modules/agents.zh-en.md
