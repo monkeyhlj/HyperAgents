@@ -775,6 +775,45 @@ class PostgresStore:
             )
         return result
 
+    def list_mcp_resources_for_project(
+        self,
+        db: Session,
+        project_id: str,
+        mcp_ids: list[str],
+        actor: str,
+    ) -> list[dict]:
+        if not mcp_ids:
+            return []
+
+        self.assert_project_member(db, project_id, actor)
+        result: list[dict] = []
+        for mcp_id in mcp_ids:
+            resource = db.get(ResourceModel, mcp_id)
+            if not resource or resource.project_id != project_id:
+                continue
+            if resource.kind != ResourceKind.MCP.value:
+                continue
+
+            visibility = Visibility(resource.visibility)
+            if visibility == Visibility.PRIVATE and resource.owner_id != actor:
+                continue
+
+            config = dict(resource.config or {})
+            result.append(
+                {
+                    "id": resource.id,
+                    "name": resource.name,
+                    "transport": config.get("transport") or "streamable_http",
+                    "endpoint_url": config.get("endpoint_url") or "",
+                    "command": config.get("command") or "",
+                    "args": config.get("args") or [],
+                    "headers": config.get("headers") or {},
+                    "env": config.get("env") or {},
+                    "timeout_seconds": config.get("timeout_seconds") or 8,
+                }
+            )
+        return result
+
     def _to_project_schema(self, db: Session, project: ProjectModel) -> Project:
         members_stmt = select(ProjectMemberModel.user_id).where(ProjectMemberModel.project_id == project.id)
         members = list(db.scalars(members_stmt).all())

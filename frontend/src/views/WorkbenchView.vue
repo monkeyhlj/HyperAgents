@@ -70,7 +70,16 @@
           <p v-if="item.role === 'user'">{{ item.text }}</p>
           <div v-else>
             <div v-if="item.used_tools && item.used_tools.length > 0" style="margin-bottom: 8px">
-              <Tag v-for="tool in item.used_tools" :key="tool" color="orange">{{ tool }}</Tag>
+              <Tag v-for="tool in item.used_tools" :key="`tool-${tool}`" color="orange">tool: {{ tool }}</Tag>
+            </div>
+            <div v-if="item.used_mcps && item.used_mcps.length > 0" style="margin-bottom: 8px">
+              <Tag
+                v-for="(call, idx) in item.used_mcps"
+                :key="`mcp-${call.mcp || ''}-${call.tool || ''}-${idx}`"
+                color="geekblue"
+              >
+                mcp: {{ call.mcp }} / tool: {{ call.tool }}
+              </Tag>
             </div>
             <div class="markdown-content" v-html="renderMarkdown(item.text)" @click="onMarkdownClick"></div>
           </div>
@@ -345,7 +354,12 @@ async function sendMessage() {
       text: textToSend,
       agent_id: agentId.value || null
     });
-    history.value.push({ role: data.role, text: data.text, used_tools: data.used_tools || [] });
+    history.value.push({
+      role: data.role,
+      text: data.text,
+      used_tools: data.used_tools || [],
+      used_mcps: data.used_mcps || []
+    });
     message.value = "";
     await loadRuns();
   } catch (error) {

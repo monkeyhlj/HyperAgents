@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
+import httpx
 
 from app.api.deps import get_current_user_id, get_db
 from app.models.enums import ResourceKind, Visibility
-from app.schemas.registry import RegistryItemCreate, RegistryListResponse
+from app.schemas.registry import MCPProbeRequest, MCPProbeResponse, RegistryItemCreate, RegistryListResponse
 from app.schemas.resource import Resource
 from app.services.postgres_store import store
 
@@ -63,3 +64,77 @@ def list_public_registry_items(
     _assert_registry_kind(kind)
     items = store.list_public_resources(db, kind, limit)
     return RegistryListResponse(items=items, total=len(items))
+
+
+@router.post("/mcp/probe", response_model=MCPProbeResponse)
+def probe_mcp_server(
+    payload: MCPProbeRequest,
+    user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+) -> MCPProbeResponse:
+    store.assert_project_member(db, payload.project_id, user_id)
+
+    config = dict(payload.config or {})
+    transport = str(config.get("transport") or "streamable_http").strip().lower()
+    endpoint_url = str(config.get("endpoint_url") or "").strip()
+
+    if transport != "streamable_http":
+        return MCPProbeResponse(
+            ok=False,
+            transport=transport,
+            endpoint_url=endpoint_url or None,
+            error="Only streamable_http probe is supported currently",
+        )
+
+    if not endpoint_url:
+        return MCPProbeResponse(
+            ok=False,
+            transport=transport,
+            error="endpoint_url is required for streamable_http transport",
+        )
+
+    health_ok = False
+    tools_ok = False
+    tools: list[str] = []
+    timeout_seconds = float(config.get("timeout_seconds") or 8)
+
+    try:
+        with httpx.Client(timeout=timeout_seconds) as client:
+            health_response = client.get(f"{endpoint_url.rstrip('/')}/health")
+            health_ok = health_response.status_code == 200
+
+            tools_response = client.get(f"{endpoint_url.rstrip('/')}/tools")
+            if tools_response.status_code == 200:
+                raw = tools_response.json()
+                if isinstance(raw, dict):
+                    tool_items = raw.get("tools") or []
+                elif isinstance(raw, list):
+                    tool_items = raw
+                else:
+                    tool_items = []
+                tools = [
+                    str(item.get("name") or "").strip()
+                    for item in tool_items
+                    if isinstance(item, dict) and str(item.get("name") or "").strip()
+                ]
+                tools_ok = True
+    except Exception as exc:
+        return MCPProbeResponse(
+            ok=False,
+            transport=transport,
+            endpoint_url=endpoint_url,
+            health_ok=health_ok,
+            tools_ok=tools_ok,
+            tools=tools,
+            error=str(exc),
+        )
+
+    return MCPProbeResponse(
+        ok=health_ok and tools_ok,
+        transport=transport,
+        endpoint_url=endpoint_url,
+        health_ok=health_ok,
+        tools_ok=tools_ok,
+        tools=tools,
+        error=None if (health_ok and tools_ok) else "Health or tools probe failed",
+    )

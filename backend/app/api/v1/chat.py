@@ -4,7 +4,7 @@ from time import perf_counter
 
 from app.api.deps import get_current_user_id, get_db
 from app.runtime.code_executor import code_runtime_executor
-from app.runtime.executor import runtime_executor
+from app.runtime.llm_service import LLMRequest, llm_service
 from app.schemas.resource import (
     CodeExecutionAuditRecord,
     ChatMessageRecord,
@@ -19,6 +19,13 @@ from app.services.postgres_store import store
 
 
 router = APIRouter()
+
+
+def _decode_code_result(code_result: dict | str) -> tuple[str, list[str], list[dict[str, str]], bool]:
+    text = code_result.get("text", "") if isinstance(code_result, dict) else str(code_result)
+    used_tools = list(code_result.get("used_tools", [])) if isinstance(code_result, dict) else []
+    used_mcps = list(code_result.get("used_mcps", [])) if isinstance(code_result, dict) else []
+    return str(text), used_tools, used_mcps, llm_service.code_requests_llm(str(text))
 
 
 @router.get("/code-execution-audits", response_model=list[CodeExecutionAuditRecord])
@@ -113,6 +120,7 @@ def send_message(
     custom_code = ""
     agent_config: dict = {}
     tools: list[dict] = []
+    mcps: list[dict] = []
     if payload.agent_id:
         agent_resource = store.get_agent_resource_for_project(db, session.project_id, payload.agent_id)
         model_provider = agent_resource.model_provider
@@ -126,6 +134,12 @@ def send_message(
             db,
             project_id=session.project_id,
             tool_ids=list(agent_config.get("tool_ids") or []),
+            actor=user_id,
+        )
+        mcps = store.list_mcp_resources_for_project(
+            db,
+            project_id=session.project_id,
+            mcp_ids=list(agent_config.get("mcp_ids") or []),
             actor=user_id,
         )
         store.append_runtime_run_event(
@@ -145,6 +159,7 @@ def send_message(
     try:
         store.append_chat_message(db, session_id, role="user", text=payload.text)
         used_tools: list[str] = []
+        used_mcps: list[dict[str, str]] = []
         if run_mode == "code":
             started = perf_counter()
             preview = payload.text[:200]
@@ -167,24 +182,40 @@ def send_message(
                     "config": agent_config,
                 },
                 tools=tools,
+                mcps=mcps,
             )
-            # code_result is now {"text": "...", "used_tools": [...]}
-            # 检查是否需要 fallback 到 LLM
-            use_llm = code_result.get("use_llm", False) if isinstance(code_result, dict) else False
-            
-            if use_llm and model_provider and model_name:
-                # 代码返回 use_llm 标记，使用 LLM 处理
-                answer = runtime_executor.run_chat(
-                    payload.text,
-                    model_provider=model_provider,
-                    model_name=model_name,
-                    provider_profile=provider_profile,
-                    system_prompt=system_prompt,
-                )
+            code_text, used_tools, used_mcps, use_llm = _decode_code_result(code_result)
+
+            if use_llm:
+                if model_provider and model_name:
+                    llm_response = llm_service.generate(
+                        LLMRequest(
+                            text=payload.text,
+                            model_provider=model_provider,
+                            model_name=model_name,
+                            provider_profile=provider_profile,
+                            system_prompt=system_prompt,
+                        )
+                    )
+                    answer = llm_response.text
+                    store.append_runtime_run_event(
+                        db=db,
+                        run_id=run.id,
+                        stage="llm",
+                        status="succeeded" if llm_response.ok else "failed",
+                        message="LLM fallback executed from code mode",
+                        payload={
+                            "provider": llm_response.provider,
+                            "model_name": llm_response.model_name,
+                            "used_fallback": llm_response.used_fallback,
+                            "error": llm_response.error,
+                        },
+                    )
+                else:
+                    answer = "[code-fallback-skipped] use_llm requested but model provider/model name is not configured"
             else:
-                answer = code_result.get("text", "") if isinstance(code_result, dict) else str(code_result)
-            
-            used_tools = code_result.get("used_tools", []) if isinstance(code_result, dict) else []
+                answer = code_text
+
             duration_ms = int((perf_counter() - started) * 1000)
             store.append_runtime_run_event(
                 db=db,
@@ -196,15 +227,33 @@ def send_message(
                     "duration_ms": duration_ms,
                     "input_preview": preview,
                     "output_length": len(answer),
+                    "used_tools": used_tools,
+                    "used_mcps": used_mcps,
                 },
             )
         else:
-            answer = runtime_executor.run_chat(
-                payload.text,
-                model_provider=model_provider,
-                model_name=model_name,
-                provider_profile=provider_profile,
-                system_prompt=system_prompt,
+            llm_response = llm_service.generate(
+                LLMRequest(
+                    text=payload.text,
+                    model_provider=model_provider,
+                    model_name=model_name,
+                    provider_profile=provider_profile,
+                    system_prompt=system_prompt,
+                )
+            )
+            answer = llm_response.text
+            store.append_runtime_run_event(
+                db=db,
+                run_id=run.id,
+                stage="llm",
+                status="succeeded" if llm_response.ok else "failed",
+                message="LLM generation completed",
+                payload={
+                    "provider": llm_response.provider,
+                    "model_name": llm_response.model_name,
+                    "used_fallback": llm_response.used_fallback,
+                    "error": llm_response.error,
+                },
             )
         store.append_chat_message(db, session_id, role="assistant", text=answer)
         store.finish_runtime_run(
@@ -222,7 +271,14 @@ def send_message(
             message="Runtime execution completed",
             payload={"output_length": len(answer)},
         )
-        return ChatMessageResponse(session_id=session_id, role="assistant", text=answer, run_id=run.id, used_tools=used_tools)
+        return ChatMessageResponse(
+            session_id=session_id,
+            role="assistant",
+            text=answer,
+            run_id=run.id,
+            used_tools=used_tools,
+            used_mcps=used_mcps,
+        )
     except Exception as exc:
         error_text = str(exc)
         if run_mode == "code":

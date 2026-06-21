@@ -11,14 +11,14 @@ from app.core.config import settings
 
 
 @dataclass
-class ChatGenerationRequest:
+class ProviderGenerationRequest:
     text: str
     model_name: str
     system_prompt: str | None = None
 
 
 class ProviderClient:
-    def generate(self, request: ChatGenerationRequest) -> str:
+    def generate(self, request: ProviderGenerationRequest) -> str:
         raise NotImplementedError
 
 
@@ -41,9 +41,14 @@ class OpenAIProviderClient(ProviderClient):
         self._api_key = _env(f"{self._env_prefix}_API_KEY", settings.openai_api_key)
         self._base_url = _env(f"{self._env_prefix}_BASE_URL", settings.openai_base_url)
         self._default_model = _env(f"{self._env_prefix}_DEFAULT_MODEL", settings.openai_default_model)
-        self._client = OpenAI(api_key=self._api_key, base_url=self._base_url)
+        # Keep timeout aligned with local provider timeout to avoid hanging requests.
+        self._client = OpenAI(
+            api_key=self._api_key,
+            base_url=self._base_url,
+            timeout=float(settings.model_request_timeout_seconds),
+        )
 
-    def generate(self, request: ChatGenerationRequest) -> str:
+    def generate(self, request: ProviderGenerationRequest) -> str:
         if not self._api_key and not self._base_url:
             raise RuntimeError(f"{self._env_prefix}_API_KEY is not configured")
 
@@ -64,7 +69,7 @@ class LocalhostProviderClient(ProviderClient):
     def __init__(self) -> None:
         self._base_url = settings.localhost_llm_base_url.rstrip("/")
 
-    def generate(self, request: ChatGenerationRequest) -> str:
+    def generate(self, request: ProviderGenerationRequest) -> str:
         messages: list[dict[str, str]] = []
         if request.system_prompt:
             messages.append({"role": "system", "content": request.system_prompt})

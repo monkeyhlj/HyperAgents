@@ -39,9 +39,29 @@
             {{ toolConfig(row).shared_in_project === false ? 'false' : 'true' }}
           </Tag>
         </template>
+        <template #mcpTransport="{ row }">
+          {{ mcpConfig(row).transport || "streamable_http" }}
+        </template>
+        <template #mcpEndpoint="{ row }">
+          <span v-if="mcpConfig(row).transport === 'stdio'">{{ mcpConfig(row).command || '-' }}</span>
+          <span v-else>{{ mcpConfig(row).endpoint_url || '-' }}</span>
+        </template>
+        <template #mcpLastProbe="{ row }">
+          <Tag v-if="row._mcp_probe?.ok" color="green">ok</Tag>
+          <Tag v-else-if="row._mcp_probe" color="red">failed</Tag>
+          <Tag v-else color="default">untested</Tag>
+        </template>
         <template #action="{ row }">
           <Space>
             <Button size="small" @click="openDetail(row)">Detail</Button>
+            <Button
+              v-if="resourceKind === 'mcp'"
+              size="small"
+              :loading="probingById[row.id] === true"
+              @click="probeMcp(row)"
+            >
+              Test
+            </Button>
             <Button size="small" type="primary" ghost @click="openEditPage(row)">Edit</Button>
             <Button size="small" type="error" ghost @click="openDelete(row)">Delete</Button>
           </Space>
@@ -61,6 +81,9 @@
         <DescriptionsItem v-if="resourceKind !== 'tool'" label="Model Provider">{{ current.model_provider || '-' }}</DescriptionsItem>
         <DescriptionsItem v-if="resourceKind !== 'tool'" label="Model Name">{{ current.model_name || '-' }}</DescriptionsItem>
         <DescriptionsItem v-if="resourceKind !== 'tool'" label="Provider Profile">{{ current.provider_profile || '-' }}</DescriptionsItem>
+        <DescriptionsItem v-if="resourceKind === 'mcp'" label="Transport">{{ mcpConfig(current).transport || 'streamable_http' }}</DescriptionsItem>
+        <DescriptionsItem v-if="resourceKind === 'mcp'" label="Endpoint URL">{{ mcpConfig(current).endpoint_url || '-' }}</DescriptionsItem>
+        <DescriptionsItem v-if="resourceKind === 'mcp'" label="Command">{{ mcpConfig(current).command || '-' }}</DescriptionsItem>
         <DescriptionsItem label="Description">{{ current.description || '-' }}</DescriptionsItem>
         <DescriptionsItem label="Resource ID">{{ current.id }}</DescriptionsItem>
       </Descriptions>
@@ -90,6 +113,7 @@ const router = useRouter();
 const resources = ref([]);
 const loading = ref(false);
 const deleting = ref(false);
+const probingById = ref({});
 const queryText = ref("");
 const projectQuery = ref("");
 
@@ -127,6 +151,20 @@ const columns = computed(() => {
     ];
   }
 
+  if (resourceKind.value === "mcp") {
+    return [
+      { title: "Kind", key: "kind", width: 100 },
+      { title: "Name", key: "name", minWidth: 180 },
+      { title: "Project", slot: "project", minWidth: 160 },
+      { title: "Visibility", key: "visibility", width: 120 },
+      { title: "Transport", slot: "mcpTransport", width: 150 },
+      { title: "Endpoint/Command", slot: "mcpEndpoint", minWidth: 220 },
+      { title: "Last Test", slot: "mcpLastProbe", width: 120 },
+      { title: "ID", key: "id", minWidth: 220 },
+      { title: "Action", slot: "action", minWidth: 240 }
+    ];
+  }
+
   return [
     { title: "Kind", key: "kind", width: 120 },
     { title: "Name", key: "name", minWidth: 180 },
@@ -141,6 +179,36 @@ const columns = computed(() => {
 
 function toolConfig(resource) {
   return (resource && resource.config) || {};
+}
+
+function mcpConfig(resource) {
+  return (resource && resource.config) || {};
+}
+
+async function probeMcp(row) {
+  probingById.value = { ...probingById.value, [row.id]: true };
+  try {
+    const result = await api.probeMcp({
+      project_id: row.project_id,
+      config: mcpConfig(row)
+    });
+    const items = resources.value.map((item) => {
+      if (item.id !== row.id) {
+        return item;
+      }
+      return { ...item, _mcp_probe: result };
+    });
+    resources.value = items;
+    if (result.ok) {
+      Message.success(`MCP probe success: ${result.tools.length} tool(s)`);
+    } else {
+      Message.error(result.error || "MCP probe failed");
+    }
+  } catch (error) {
+    Message.error(error.message || "MCP probe failed");
+  } finally {
+    probingById.value = { ...probingById.value, [row.id]: false };
+  }
 }
 
 async function loadData() {

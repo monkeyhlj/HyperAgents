@@ -226,6 +226,42 @@ def execute_tool(tools, tool_name, input_data, context):
     return tool_func(safe_input, tool_context)
 
 
+def execute_mcp(mcps, mcp_name, tool_name, input_data):
+    mcp_map = {
+        str(item.get("name") or "").strip(): item
+        for item in (mcps or [])
+        if str(item.get("name") or "").strip()
+    }
+    mcp_spec = mcp_map.get(str(mcp_name).strip())
+    if not mcp_spec:
+        raise RuntimeError(f"MCP not found: {mcp_name}")
+
+    transport = str(mcp_spec.get("transport") or "streamable_http").strip().lower()
+    if transport != "streamable_http":
+        raise RuntimeError(f"Unsupported MCP transport: {transport}")
+
+    endpoint_url = str(mcp_spec.get("endpoint_url") or "").strip()
+    if not endpoint_url:
+        raise RuntimeError(f"MCP endpoint_url is empty: {mcp_name}")
+
+    timeout_seconds = float(mcp_spec.get("timeout_seconds") or 8)
+    headers = mcp_spec.get("headers") or {}
+    safe_input = input_data if isinstance(input_data, dict) else {"value": input_data}
+    payload = {"name": str(tool_name).strip(), "input": safe_input}
+
+    with httpx.Client(timeout=timeout_seconds) as client:
+        response = client.post(
+            f"{endpoint_url.rstrip('/')}/tools/call",
+            json=payload,
+            headers=headers,
+        )
+        response.raise_for_status()
+        content_type = (response.headers.get("content-type") or "").lower()
+        if "application/json" in content_type:
+            return response.json()
+        return {"ok": True, "text": response.text}
+
+
 def main():
     raw = sys.argv[1] if len(sys.argv) > 1 else ""
     payload = json.loads(base64.b64decode(raw.encode("ascii")).decode("utf-8")) if raw else {}
@@ -233,7 +269,9 @@ def main():
     custom_code = payload.get("custom_code", "")
     context = payload.get("context", {})
     tools = payload.get("tools", [])
+    mcps = payload.get("mcps", [])
     tool_calls = []
+    mcp_calls = []
 
     if not str(custom_code).strip():
         raise RuntimeError("custom_code is empty")
@@ -249,6 +287,16 @@ def main():
     def list_tools():
         return [str(item.get("name") or "") for item in tools if str(item.get("name") or "").strip()]
 
+    def call_mcp(mcp_name, tool_name, input_data=None):
+        mcp_name_text = str(mcp_name).strip()
+        tool_name_text = str(tool_name).strip()
+        result = execute_mcp(mcps, mcp_name_text, tool_name_text, input_data or {})
+        mcp_calls.append({"mcp": mcp_name_text, "tool": tool_name_text})
+        return result
+
+    def list_mcps():
+        return [str(item.get("name") or "") for item in mcps if str(item.get("name") or "").strip()]
+
     safe_globals = {
         "__builtins__": ALLOWED_BUILTINS,
         "httpx": httpx,
@@ -257,6 +305,8 @@ def main():
         "requests": httpx,
         "call_tool": call_tool,
         "list_tools": list_tools,
+        "call_mcp": call_mcp,
+        "list_mcps": list_mcps,
     }
     safe_locals = {}
 
@@ -275,7 +325,22 @@ def main():
     if tool_calls:
         used_tools_list = list(dict.fromkeys(tool_calls))
 
-    print(json.dumps({"ok": True, "result": normalize_result(result), "used_tools": used_tools_list}))
+    used_mcps_list = []
+    if mcp_calls:
+        seen = set()
+        for item in mcp_calls:
+            key = (item.get("mcp"), item.get("tool"))
+            if key in seen:
+                continue
+            seen.add(key)
+            used_mcps_list.append({"mcp": str(item.get("mcp") or ""), "tool": str(item.get("tool") or "")})
+
+    print(json.dumps({
+        "ok": True,
+        "result": normalize_result(result),
+        "used_tools": used_tools_list,
+        "used_mcps": used_mcps_list,
+    }))
 
 
 if __name__ == "__main__":
@@ -297,6 +362,7 @@ class CodeRuntimeExecutor:
         custom_code: str,
         context: dict | None = None,
         tools: list[dict] | None = None,
+        mcps: list[dict] | None = None,
     ) -> str:
         if not custom_code.strip():
             raise CodeExecutionError("custom_code is empty")
@@ -307,6 +373,7 @@ class CodeRuntimeExecutor:
             "custom_code": custom_code,
             "context": dict(context or {}),
             "tools": list(tools or []),
+            "mcps": list(mcps or []),
         }
         encoded_payload = base64.b64encode(json.dumps(payload, ensure_ascii=False).encode("utf-8")).decode("ascii")
         runner_path = None
@@ -340,9 +407,10 @@ class CodeRuntimeExecutor:
 
             result_text = str(data.get("result") or "")
             used_tools = list(data.get("used_tools") or [])
+            used_mcps = list(data.get("used_mcps") or [])
             if len(result_text) > settings.code_execution_max_output_chars:
                 result_text = result_text[: settings.code_execution_max_output_chars] + "\n...[truncated]"
-            return {"text": result_text, "used_tools": used_tools}
+            return {"text": result_text, "used_tools": used_tools, "used_mcps": used_mcps}
         except subprocess.TimeoutExpired as exc:
             raise CodeExecutionError(
                 f"Code execution timeout after {settings.code_execution_timeout_seconds}s"

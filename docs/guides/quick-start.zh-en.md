@@ -198,6 +198,48 @@ English:
 English:
 Open `http://localhost:8000/health`; expected response is `{"status":"ok"}`.
 
+## 6.0) MCP 本地联调 / MCP Local Validation
+
+中文：
+
+1. 启动 fake MCP server：
+
+```powershell
+cd backend
+.venv\Scripts\python.exe scripts\mock_mcp_server.py
+```
+
+2. 打开前端 `Resources -> MCPs -> Create MCP`
+3. 选择 `transport=streamable_http`
+4. 填写 `endpoint_url=http://127.0.0.1:8099`
+5. 点击 `Test MCP Connection`
+6. 保存后在 MCPs 列表页再点行级 `Test`
+
+期望：
+
+- Probe 成功
+- Tools 列表至少包含 `ping`、`echo`
+
+English:
+
+1. Start fake MCP server:
+
+```powershell
+cd backend
+.venv\Scripts\python.exe scripts\mock_mcp_server.py
+```
+
+2. Open frontend `Resources -> MCPs -> Create MCP`
+3. Set `transport=streamable_http`
+4. Fill `endpoint_url=http://127.0.0.1:8099`
+5. Click `Test MCP Connection`
+6. Save MCP and click row-level `Test` in MCPs list
+
+Expected:
+
+- Probe succeeds
+- Tool list contains at least `ping` and `echo`
+
 ## 6.1) Runtime Run 验证 / Runtime Run Validation
 
 中文：

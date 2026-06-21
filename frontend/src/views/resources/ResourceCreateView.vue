@@ -257,19 +257,112 @@
                   </Col>
                 </Row>
               </template>
+
+              <template v-else-if="isMcpKind">
+                <Divider />
+
+                <Row :gutter="16">
+                  <Col :xs="24" :md="8">
+                    <FormItem label="Transport">
+                      <Select v-model="form.mcp_transport">
+                        <Option value="streamable_http">streamable_http</Option>
+                        <Option value="stdio">stdio</Option>
+                      </Select>
+                    </FormItem>
+                  </Col>
+                  <Col :xs="24" :md="8">
+                    <FormItem label="Timeout (seconds)">
+                      <Input v-model="form.mcp_timeout_seconds" type="number" />
+                    </FormItem>
+                  </Col>
+                  <Col :xs="24" :md="8">
+                    <FormItem label="Quick Test">
+                      <Space>
+                        <Button :loading="mcpProbing" @click="probeMcpDraft">Test</Button>
+                        <Button @click="showMcpTemplate = true">Template</Button>
+                      </Space>
+                    </FormItem>
+                  </Col>
+                </Row>
+
+                <Row v-if="form.mcp_transport === 'streamable_http'" :gutter="16">
+                  <Col :xs="24" :md="24">
+                    <FormItem label="Endpoint URL">
+                      <Input v-model="form.mcp_endpoint_url" placeholder="e.g. http://127.0.0.1:8099" />
+                    </FormItem>
+                  </Col>
+                </Row>
+
+                <Row v-else :gutter="16">
+                  <Col :xs="24" :md="12">
+                    <FormItem label="Command">
+                      <Input v-model="form.mcp_command" placeholder="e.g. python" />
+                    </FormItem>
+                  </Col>
+                  <Col :xs="24" :md="12">
+                    <FormItem label="Args JSON">
+                      <CodeEditor
+                        v-model="form.mcp_args_json"
+                        language="json"
+                        min-height="120px"
+                        placeholder='e.g. ["scripts/mock_mcp_server.py"]'
+                      />
+                    </FormItem>
+                  </Col>
+                </Row>
+
+                <Row :gutter="16">
+                  <Col :xs="24" :md="12">
+                    <FormItem label="Headers JSON">
+                      <CodeEditor
+                        v-model="form.mcp_headers_json"
+                        language="json"
+                        min-height="120px"
+                        placeholder='e.g. {"Authorization":"Bearer xxx"}'
+                      />
+                    </FormItem>
+                  </Col>
+                  <Col :xs="24" :md="12">
+                    <FormItem label="Env JSON">
+                      <CodeEditor
+                        v-model="form.mcp_env_json"
+                        language="json"
+                        min-height="120px"
+                        placeholder='e.g. {"MCP_TOKEN":"demo"}'
+                      />
+                    </FormItem>
+                  </Col>
+                </Row>
+
+                <Alert v-if="mcpProbeResult" :type="mcpProbeResult.ok ? 'success' : 'error'" show-icon style="margin-bottom: 12px">
+                  {{ mcpProbeResult.ok ? `Probe success, tools: ${mcpProbeResult.tools.join(', ') || '-'}` : (mcpProbeResult.error || 'Probe failed') }}
+                </Alert>
+              </template>
             </template>
 
             <FormItem v-if="showConfigEditor" :label="configEditorLabel">
               <Alert show-icon class="authoring-guide-alert">
                 <template #desc>
                   <div class="authoring-guide-copy">
-                    <div>
+                    <div v-if="isMcpKind">
+                      <strong>MCP advanced config:</strong>
+                      Keep core fields in the MCP form above (transport / endpoint / command / timeout). Put optional extras here, such as auth strategies, feature flags, or routing hints.
+                    </div>
+                    <div v-else>
                       <strong>Advanced Config example:</strong>
                       provider_profile decides which .env prefix the backend reads. For example, provider_profile=qwen means QWEN_API_KEY / QWEN_BASE_URL / QWEN_DEFAULT_MODEL must exist in .env. role_name is optional and only used as a human-readable label inside the config.
                     </div>
-                    <pre class="config-example-block">{
+                    <pre v-if="!isMcpKind" class="config-example-block">{
   "provider_profile": "qwen",
   "temperature": 0.2
+}</pre>
+                    <pre v-else class="config-example-block">{
+  "feature_flags": {
+    "allow_dynamic_tools": true
+  },
+  "metadata": {
+    "owner": "platform"
+  }
 }</pre>
                   </div>
                 </template>
@@ -292,6 +385,55 @@
         </Card>
       </Col>
     </Row>
+
+    <!-- MCP Template Modal -->
+    <Modal v-model="showMcpTemplate" title="MCP Recommended Template" ok-text="Copy Template" :loading="false" @on-ok="copyMcpTemplate">
+      <div class="mcp-template-modal">
+        <Alert show-icon style="margin-bottom: 12px">
+          <template #desc>
+            Below is the recommended complete MCP configuration structure. Click "Copy Template" to paste it into your form editors.
+          </template>
+        </Alert>
+
+        <div class="template-section">
+          <h4>Core Fields (MCP Form)</h4>
+          <div class="template-code">
+            <div class="code-line"><span class="key">transport</span>: <span class="value">streamable_http</span> (or stdio)</div>
+            <div class="code-line"><span class="key">endpoint_url</span>: <span class="value">http://127.0.0.1:8099</span> (HTTP mode)</div>
+            <div class="code-line"><span class="key">command</span>: <span class="value">python</span> (stdio mode)</div>
+            <div class="code-line"><span class="key">timeout_seconds</span>: <span class="value">8</span></div>
+          </div>
+        </div>
+
+        <Divider />
+
+        <div class="template-section">
+          <h4>Headers JSON</h4>
+          <pre class="template-json">{{ mcpTemplateHeaders }}</pre>
+          <p class="template-hint">🔑 Use for: Bearer token, API key, custom headers</p>
+        </div>
+
+        <div class="template-section">
+          <h4>Env JSON</h4>
+          <pre class="template-json">{{ mcpTemplateEnv }}</pre>
+          <p class="template-hint">📝 Use for: Debug flags, MCP server config (HTTP mode: recorded but not sent; stdio mode: will be used)</p>
+        </div>
+
+        <div class="template-section">
+          <h4>Advanced MCP Config JSON</h4>
+          <pre class="template-json">{{ mcpTemplateAdvanced }}</pre>
+          <p class="template-hint">⚙️ Use for: feature_flags, metadata, routing, retry policies</p>
+        </div>
+
+        <Divider />
+
+        <Alert type="success" show-icon>
+          <template #desc>
+            <strong>Current Status:</strong> Only streamable_http is supported. stdio is planned for future release.
+          </template>
+        </Alert>
+      </div>
+    </Modal>
   </div>
 </template>
 
@@ -310,9 +452,12 @@ const templates = ref([]);
 const ownedResources = ref([]);
 const saving = ref(false);
 const testing = ref(false);
+const mcpProbing = ref(false);
+const showMcpTemplate = ref(false);
 const testInput = ref("");
 const testMessages = ref([]);
 const loadedResource = ref(null);
+const mcpProbeResult = ref(null);
 
 const form = ref({
   project_id: "",
@@ -333,6 +478,13 @@ const form = ref({
   tool_code: "def run(input_data: dict, context: dict) -> dict:\n    # Implement tool logic here\n    return {\"ok\": True, \"echo\": input_data}\n",
   tool_input_schema_json: "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"query\": { \"type\": \"string\" }\n  },\n  \"required\": [\"query\"]\n}",
   tool_output_schema_json: "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"ok\": { \"type\": \"boolean\" },\n    \"echo\": { \"type\": \"object\" }\n  }\n}",
+  mcp_transport: "streamable_http",
+  mcp_endpoint_url: "http://127.0.0.1:8099",
+  mcp_command: "",
+  mcp_args_json: "[]",
+  mcp_headers_json: "{}",
+  mcp_env_json: "{}",
+  mcp_timeout_seconds: "8",
   config_json: "{\n  \"provider_profile\": \"qwen\",\n  \"temperature\": 0.2\n}",
   tool_ids: [],
   skill_ids: [],
@@ -343,6 +495,7 @@ const form = ref({
 const kind = computed(() => route.meta.kind || "agent");
 const isAgentKind = computed(() => kind.value === "agent");
 const isToolKind = computed(() => kind.value === "tool");
+const isMcpKind = computed(() => kind.value === "mcp");
 const pageTitle = computed(() => route.meta.title || "Create Resource");
 const backRoute = computed(() => route.meta.backRoute || "resources-overview");
 const isEditMode = computed(() => route.meta.mode === "edit");
@@ -355,6 +508,9 @@ const configEditorLabel = computed(() => {
   }
   if (isToolKind.value) {
     return "Advanced Tool Config JSON";
+  }
+  if (isMcpKind.value) {
+    return "Advanced MCP Config JSON (Editable)";
   }
   return "Config JSON";
 });
@@ -370,6 +526,39 @@ const nonAgentHint = computed(() => {
 const authoringGuidePath = "docs/modules/agents.zh-en.md";
 const authoringGuideUrl = "https://github.com/monkeyhlj/HyperAgents/blob/main/docs/modules/agents.zh-en.md";
 
+// MCP Template strings
+const mcpTemplateHeaders = `{
+  "Authorization": "Bearer your-jwt-token-here",
+  "X-API-Key": "sk-1234567890",
+  "X-Custom-Header": "value"
+}`;
+
+const mcpTemplateEnv = `{
+  "DEBUG": "false",
+  "LOG_LEVEL": "info",
+  "MCP_FEATURE_FLAG_DYNAMIC_TOOLS": "true"
+}`;
+
+const mcpTemplateAdvanced = `{
+  "feature_flags": {
+    "allow_dynamic_tools": true,
+    "enable_caching": false
+  },
+  "metadata": {
+    "owner": "platform-team",
+    "version": "v1.0.0",
+    "tags": ["production"]
+  },
+  "routing": {
+    "primary_endpoint": "http://primary:8000",
+    "fallback_endpoint": "http://fallback:8000"
+  },
+  "retry": {
+    "max_attempts": 3,
+    "backoff_seconds": 2
+  }
+}`;
+
 const scopedOwned = computed(() => {
   if (!form.value.project_id) {
     return [];
@@ -381,6 +570,23 @@ const toolOptions = computed(() => scopedOwned.value.filter((item) => item.kind 
 const skillOptions = computed(() => scopedOwned.value.filter((item) => item.kind === "skill"));
 const mcpOptions = computed(() => scopedOwned.value.filter((item) => item.kind === "mcp"));
 const kbOptions = computed(() => scopedOwned.value.filter((item) => item.kind === "knowledge_base"));
+
+function defaultAdvancedConfigJsonByKind(targetKind) {
+  if (targetKind === "mcp") {
+    return "{\n  \"feature_flags\": {\n    \"allow_dynamic_tools\": true\n  },\n  \"metadata\": {\n    \"owner\": \"platform\"\n  }\n}";
+  }
+  if (targetKind === "agent") {
+    return "{\n  \"provider_profile\": \"qwen\",\n  \"temperature\": 0.2\n}";
+  }
+  return "{}";
+}
+
+function applyCreateDefaultsByKind() {
+  if (isEditMode.value) {
+    return;
+  }
+  form.value.config_json = defaultAdvancedConfigJsonByKind(kind.value);
+}
 
 function goBack() {
   router.push({ name: backRoute.value });
@@ -462,6 +668,37 @@ async function loadResource() {
     return;
   }
 
+  if (isMcpKind.value) {
+    form.value.mcp_transport = config.transport || "streamable_http";
+    form.value.mcp_endpoint_url = config.endpoint_url || "";
+    form.value.mcp_command = config.command || "";
+    form.value.mcp_args_json = JSON.stringify(config.args || [], null, 2);
+    form.value.mcp_headers_json = JSON.stringify(config.headers || {}, null, 2);
+    form.value.mcp_env_json = JSON.stringify(config.env || {}, null, 2);
+    form.value.mcp_timeout_seconds = String(config.timeout_seconds || 8);
+
+    form.value.model_provider = "";
+    form.value.model_name = "";
+    form.value.provider_profile = "";
+    form.value.system_prompt = "";
+    form.value.custom_code = "";
+    form.value.tool_ids = [];
+    form.value.skill_ids = [];
+    form.value.mcp_ids = [];
+    form.value.knowledge_base_ids = [];
+
+    const advancedConfig = { ...config };
+    delete advancedConfig.transport;
+    delete advancedConfig.endpoint_url;
+    delete advancedConfig.command;
+    delete advancedConfig.args;
+    delete advancedConfig.headers;
+    delete advancedConfig.env;
+    delete advancedConfig.timeout_seconds;
+    form.value.config_json = JSON.stringify(advancedConfig, null, 2);
+    return;
+  }
+
   form.value.model_provider = "";
   form.value.model_name = "";
   form.value.provider_profile = "";
@@ -524,6 +761,18 @@ function parseToolSchema(rawJson, label) {
   }
 }
 
+function parseJsonValue(rawText, label) {
+  const text = (rawText || "").trim();
+  if (!text) {
+    return null;
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(`${label} is invalid JSON`);
+  }
+}
+
 function buildRuntimeConfig() {
   if (isToolKind.value) {
     const entrypoint = form.value.tool_entrypoint.trim();
@@ -539,6 +788,28 @@ function buildRuntimeConfig() {
       output_schema: parseToolSchema(form.value.tool_output_schema_json, "Tool output schema")
     };
   }
+  if (isMcpKind.value) {
+    if (form.value.mcp_transport === "streamable_http" && !(form.value.mcp_endpoint_url || "").trim()) {
+      throw new Error("MCP endpoint URL is required for streamable_http transport");
+    }
+    if (form.value.mcp_transport === "stdio" && !(form.value.mcp_command || "").trim()) {
+      throw new Error("MCP command is required for stdio transport");
+    }
+    const timeoutSeconds = Number(form.value.mcp_timeout_seconds || 8);
+    const baseConfig = {
+      transport: form.value.mcp_transport,
+      endpoint_url: form.value.mcp_transport === "streamable_http" ? (form.value.mcp_endpoint_url || "").trim() : "",
+      command: form.value.mcp_transport === "stdio" ? (form.value.mcp_command || "").trim() : "",
+      args: parseJsonValue(form.value.mcp_args_json, "MCP args") || [],
+      headers: parseJsonValue(form.value.mcp_headers_json, "MCP headers") || {},
+      env: parseJsonValue(form.value.mcp_env_json, "MCP env") || {},
+      timeout_seconds: Number.isFinite(timeoutSeconds) && timeoutSeconds > 0 ? timeoutSeconds : 8
+    };
+    return {
+      ...baseConfig,
+      ...parseAdvancedConfig()
+    };
+  }
   if (!isAgentKind.value) {
     return parseAdvancedConfig();
   }
@@ -552,6 +823,52 @@ function buildRuntimeConfig() {
     knowledge_base_ids: form.value.knowledge_base_ids,
     ...parseAdvancedConfig()
   };
+}
+
+async function probeMcpDraft() {
+  if (!isMcpKind.value) {
+    return;
+  }
+  if (!form.value.project_id) {
+    Message.warning("Please select project first");
+    return;
+  }
+
+  let config;
+  try {
+    config = buildRuntimeConfig();
+  } catch (error) {
+    Message.error(error.message || "MCP config invalid");
+    return;
+  }
+
+  mcpProbing.value = true;
+  mcpProbeResult.value = null;
+  try {
+    const result = await api.probeMcp({
+      project_id: form.value.project_id,
+      config
+    });
+    mcpProbeResult.value = result;
+    if (result.ok) {
+      Message.success("MCP probe success");
+    } else {
+      Message.error(result.error || "MCP probe failed");
+    }
+  } catch (error) {
+    Message.error(error.message || "MCP probe failed");
+  } finally {
+    mcpProbing.value = false;
+  }
+}
+
+function copyMcpTemplate() {
+  // Copy recommended template values to form
+  form.value.mcp_headers_json = mcpTemplateHeaders;
+  form.value.mcp_env_json = mcpTemplateEnv;
+  form.value.config_json = mcpTemplateAdvanced;
+  showMcpTemplate.value = false;
+  Message.success("Template copied to form! Edit as needed.");
 }
 
 async function runDraftTest() {
@@ -643,6 +960,7 @@ async function submitForm() {
 
 onMounted(async () => {
   try {
+    applyCreateDefaultsByKind();
     await Promise.all([loadProjects(), loadTemplates(), loadOwnedResources()]);
     await loadResource();
   } catch (error) {
@@ -723,5 +1041,63 @@ onMounted(async () => {
   font-family: Consolas, "Courier New", monospace;
   white-space: pre-wrap;
   overflow-x: auto;
+}
+
+.mcp-template-modal {
+  max-height: 600px;
+  overflow-y: auto;
+  padding: 8px 0;
+}
+
+.template-section {
+  margin-bottom: 20px;
+}
+
+.template-section h4 {
+  margin: 0 0 8px 0;
+  color: #1f2d3d;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.template-code {
+  background: #f8f9fb;
+  border: 1px solid #e8eaec;
+  border-radius: 6px;
+  padding: 12px;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.code-line {
+  margin: 4px 0;
+}
+
+.code-line .key {
+  color: #c41d7f;
+  font-weight: 600;
+}
+
+.code-line .value {
+  color: #135200;
+}
+
+.template-json {
+  margin: 8px 0;
+  padding: 10px 12px;
+  background: #f8f9fb;
+  border: 1px solid #e8eaec;
+  border-radius: 6px;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-x: auto;
+}
+
+.template-hint {
+  margin: 8px 0 0 0;
+  color: #666;
+  font-size: 12px;
 }
 </style>

@@ -1,10 +1,11 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
+import json
 
 from app.api.deps import get_current_user_id, get_db
 from app.models.enums import ResourceKind, Visibility
 from app.runtime.code_executor import code_runtime_executor
-from app.runtime.executor import runtime_executor
+from app.runtime.llm_service import LLMRequest, llm_service
 from app.schemas.resource import (
     OwnedResource,
     Resource,
@@ -87,7 +88,13 @@ def preview_resource_chat(
             tool_ids=list((payload.config or {}).get("tool_ids") or []),
             actor=user_id,
         )
-        text = code_runtime_executor.run(
+        mcps = store.list_mcp_resources_for_project(
+            db,
+            project_id=payload.project_id,
+            mcp_ids=list((payload.config or {}).get("mcp_ids") or []),
+            actor=user_id,
+        )
+        code_result = code_runtime_executor.run(
             payload.text,
             custom_code=payload.custom_code or "",
             context={
@@ -96,15 +103,29 @@ def preview_resource_chat(
                 "config": payload.config,
             },
             tools=tools,
+            mcps=mcps,
         )
+        text = code_result.get("text", "") if isinstance(code_result, dict) else str(code_result)
+        if llm_service.code_requests_llm(text) and payload.model_provider and payload.model_name:
+            text = llm_service.generate(
+                LLMRequest(
+                    text=payload.text,
+                    model_provider=payload.model_provider,
+                    model_name=payload.model_name,
+                    provider_profile=payload.provider_profile,
+                    system_prompt=payload.system_prompt,
+                )
+            ).text
     else:
-        text = runtime_executor.run_chat(
-            payload.text,
-            model_provider=payload.model_provider,
-            model_name=payload.model_name,
-            provider_profile=payload.provider_profile,
-            system_prompt=payload.system_prompt,
-        )
+        text = llm_service.generate(
+            LLMRequest(
+                text=payload.text,
+                model_provider=payload.model_provider,
+                model_name=payload.model_name,
+                provider_profile=payload.provider_profile,
+                system_prompt=payload.system_prompt,
+            )
+        ).text
     return ResourcePreviewChatResponse(text=text)
 
 

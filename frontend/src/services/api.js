@@ -115,6 +115,12 @@ export const api = {
   listCodeExecutionAudits(query = {}) {
     return request(withQuery("/api/v1/chat/code-execution-audits", query));
   },
+  probeMcp(payload) {
+    return request("/api/v1/registry/mcp/probe", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+  },
   listDefaultResources(query = {}) {
     return request(withQuery("/api/v1/resources/defaults", query));
   },

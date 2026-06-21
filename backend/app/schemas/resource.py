@@ -72,6 +72,7 @@ class ChatMessageResponse(BaseModel):
     text: str
     run_id: str | None = None
     used_tools: list[str] = []
+    used_mcps: list[dict[str, str]] = []
 
 
 class ChatSessionRecord(BaseModel):
