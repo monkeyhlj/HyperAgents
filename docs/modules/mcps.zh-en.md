@@ -353,6 +353,92 @@ MCP 列表页面显示已创建的 MCP 资源及其状态：
 12. 点击 **Test MCP Connection** 验证连接
 13. 点击 **Create** 保存
 
+#### 添加其他官方服务 MCP（推荐流程）/ Add Other Official Service MCPs
+
+如果你要接入 GitHub、Notion、Slack、Atlassian 等官方服务 MCP，建议按下面步骤：
+
+1. 先确认该服务提供的是 **HTTP MCP endpoint**（当前系统只支持 `streamable_http`）
+2. 确认认证方式（Bearer Token / API Key / 自定义 Header）
+3. 在 Create MCP 中填写 endpoint 与 headers
+4. 先点 `Test MCP Connection`，看到 tools 列表后再保存
+5. 在 Agent 中通过 `call_mcp("mcp-name", "tool-name", {...})` 调用
+
+官方服务接入最关键是 `Headers JSON`。下面给出可直接改值的模板。
+
+##### 模板 1：Bearer Token（最常见）
+
+适用于 OAuth2 或 Personal Access Token。
+
+```json
+{
+  "transport": "streamable_http",
+  "endpoint_url": "https://<official-mcp-endpoint>",
+  "headers": {
+    "Authorization": "Bearer <YOUR_TOKEN>",
+    "User-Agent": "HyperAgents/1.0"
+  },
+  "env": {},
+  "timeout_seconds": 12
+}
+```
+
+##### 模板 2：API Key Header
+
+适用于要求 `X-API-Key` 或类似头的服务。
+
+```json
+{
+  "transport": "streamable_http",
+  "endpoint_url": "https://<official-mcp-endpoint>",
+  "headers": {
+    "X-API-Key": "<YOUR_API_KEY>",
+    "X-Client-ID": "hyperagents"
+  },
+  "env": {},
+  "timeout_seconds": 12
+}
+```
+
+##### 模板 3：带版本头/租户头
+
+适用于需要额外版本与租户标识的服务。
+
+```json
+{
+  "transport": "streamable_http",
+  "endpoint_url": "https://<official-mcp-endpoint>",
+  "headers": {
+    "Authorization": "Bearer <YOUR_TOKEN>",
+    "X-Tenant-ID": "<TENANT_ID>",
+    "X-API-Version": "2026-01-01"
+  },
+  "env": {},
+  "timeout_seconds": 15
+}
+```
+
+##### 字段落位到页面时怎么填
+
+- `Transport`: 选 `streamable_http`
+- `Endpoint URL`: 填官方 MCP 地址（不要填普通 REST API 地址）
+- `Headers JSON`: 粘贴上面模板里的 headers，并替换 token/key
+- `Env JSON`: HTTP 模式可留 `{}`（当前仅记录，不传输）
+- `Advanced MCP Config JSON`: 可选填 metadata，如 owner、version、tags
+
+##### 官方服务接入常见错误
+
+1. 把官方 REST API 地址当作 MCP endpoint
+2. 漏掉 `Authorization` 或 token 过期
+3. endpoint 可访问，但 `/tools` 返回为空（说明服务端未启用 MCP 工具）
+4. 网络可达但超时，`timeout_seconds` 太小
+
+##### 安全建议
+
+1. token/key 不要写入仓库文档和截图
+2. 建议使用最小权限 token，只开放需要的 scope
+3. 定期轮换 token
+4. 生产环境与测试环境使用不同 MCP 资源
+
 ## 4. Probe API / 连接测试接口
 
 Endpoint:
