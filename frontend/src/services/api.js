@@ -115,20 +115,6 @@ export const api = {
   listCodeExecutionAudits(query = {}) {
     return request(withQuery("/api/v1/chat/code-execution-audits", query));
   },
-  listResourceCodeVersions(resourceId) {
-    return request(`/api/v1/resources/${resourceId}/code-versions`);
-  },
-  publishResourceCodeVersion(resourceId, payload = {}) {
-    return request(`/api/v1/resources/${resourceId}/code-versions/publish`, {
-      method: "POST",
-      body: JSON.stringify(payload)
-    });
-  },
-  rollbackResourceCodeVersion(resourceId, versionId) {
-    return request(`/api/v1/resources/${resourceId}/code-versions/${versionId}/rollback`, {
-      method: "POST"
-    });
-  },
   listDefaultResources(query = {}) {
     return request(withQuery("/api/v1/resources/defaults", query));
   },

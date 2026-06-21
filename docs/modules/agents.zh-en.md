@@ -105,7 +105,156 @@ def run(input_text, context):
 - 依赖只来自 `input_text` 和 `context`，容易测试。
 - 能快速从低代码配置过渡到正式代码。
 
+### Tool call pattern in code mode / code 模式下调用 Tool
+
+中文：
+当前版本里，Agent 要调用 Tool，需要把 Agent 切到 `run_mode=code`，然后在 `Custom Code` 中显式调用 `call_tool(...)`。
+
+English:
+In the current version, an Agent can call a Tool only in `run_mode=code`, and the `Custom Code` must explicitly call `call_tool(...)`.
+
+可用辅助函数 / Available helpers:
+
+- `call_tool(tool_name, input_data)`：按 Tool 名称执行一个已关联的 Tool
+- `list_tools()`：返回当前 Agent 关联的 Tool 名称列表
+
+示例 / Example:
+
+```python
+def run(input_text, context):
+	text = input_text.strip()
+
+	if text == "ping":
+		return call_tool("testping", {"action": "ping", "text": text})
+
+	if text == "show config":
+		return {
+			"project_id": context.get("project_id"),
+			"tool_ids": context.get("config", {}).get("tool_ids", []),
+			"tools": list_tools(),
+		}
+
+	return {"echo": text}
+```
+
+说明 / Notes:
+
+- `tool_name` 要和 Tool 资源的 `name` 一致，比如 `testping`
+- 只有当前 Agent 关联到 `tool_ids` 中的 Tool 才能被调用
+- 当前仅支持 `python` Tool runtime
+- 可用内置模块：`json`、`re`（无需 import，直接使用）
+
+### Hybrid mode: Tools + LLM fallback / 混合模式：工具+LLM回退
+
+中文：
+如果你希望 code-mode Agent 在某些场景用工具计算，其他场景则由大模型处理，可以使用混合模式。
+
+做法：
+
+1. 在 Custom Code 中，对数学问题或特定操作调用 `call_tool(...)`。
+2. 对于无法处理的问题，返回 `{"use_llm": True}`。
+3. Backend 会自动检测这个标记，并调用配置的 LLM 模型来处理原始输入。
+
+完整示例 / Full example:
+
+```python
+def run(input_text, context):
+    text = input_text.strip()
+    
+    # 检测是否是数学运算问题
+    math_keywords = ["加", "+", "减", "-", "乘", "*", "除", "/", "等于", "=", "算", "计算"]
+    is_math_question = any(keyword in text for keyword in math_keywords)
+    
+    if is_math_question:
+        # 提取数字
+        numbers = re.findall(r'-?\d+\.?\d*', text)
+        if len(numbers) >= 2:
+            try:
+                # 推断操作
+                if "加" in text or "+" in text:
+                    op = "add"
+                elif "减" in text or "-" in text:
+                    op = "subtract"
+                elif "乘" in text or "*" in text:
+                    op = "multiply"
+                elif "除" in text or "/" in text:
+                    op = "divide"
+                else:
+                    op = "add"
+                
+                # 调用工具
+                result = call_tool("calculate", {
+                    "operation": op,
+                    "a": float(numbers[0]),
+                    "b": float(numbers[1])
+                })
+                
+                if result.get("ok"):
+                    return {
+                        "result": f"{numbers[0]}{op}{numbers[1]}等于{result.get('result', '')}"
+                    }
+                else:
+                    return {"error": result.get("error")}
+            except Exception as e:
+                return {"error": f"计算失败: {str(e)}"}
+    
+    # 非数学问题，交给 LLM 处理
+    return {"use_llm": True}
+```
+
+说明 / Notes:
+
+- 返回 `{"use_llm": True}` 时，Backend 会自动使用 Agent 配置的 `model_provider` 和 `model_name` 调用 LLM。
+- 如果 Agent 没有配置模型信息，LLM 回退会失败，返回错误。
+- LLM 回复会通过 `system_prompt` 进行约束。
+- 这种混合方式特别适合："规则+工具处理特定业务逻辑，通用问题交给大模型"。
+
+工具使用情况显示 / Tool usage display:
+
+- 当 code-mode Agent 调用了工具，Workbench 的 Conversation 中会显示一个**橙色标签**，标注调用的工具名。
+- 如果使用了 LLM 回退（没有调用工具），标签不会出现。
+- 这样可以清晰地看出每条回复是由工具处理还是由 LLM 处理。
+
 ## 5. Advanced Config Examples / Advanced Config 示例
+
+### provider_profile is the key / provider_profile 是关键字段
+
+中文：
+`provider_profile` 用来告诉后端“这一份 Agent 配置应该读取哪一组环境变量前缀”。它比单纯写 `model_provider` 更重要，因为它决定了 `OPENAI_*`、`ZHIPU_*`、`QWEN_*` 这一类配置到底从哪一组 `.env` 变量加载。
+`role_name` 只是一个可选的人类可读标签，用来给代码模式或提示词中的角色起名，不会影响 provider 选择。
+
+English:
+`provider_profile` tells the backend which env-variable prefix to read for this Agent configuration. It is more important than `model_provider` alone because it decides whether settings come from `OPENAI_*`, `ZHIPU_*`, `QWEN_*`, and similar `.env` entries.
+
+常见映射 / Common mappings:
+
+- `provider_profile: "openai"` -> `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_DEFAULT_MODEL`
+- `provider_profile: "zhipu"` -> `ZHIPU_API_KEY`, `ZHIPU_BASE_URL`, `ZHIPU_DEFAULT_MODEL`
+- `provider_profile: "qwen"` -> `QWEN_API_KEY`, `QWEN_BASE_URL`, `QWEN_DEFAULT_MODEL`
+
+说明 / Note:
+
+- 如果你写了 `provider_profile: "qwen"`，就要在 workspace 根目录 `.env` 里补齐 `QWEN_*` 变量。
+- `model_provider` 只表示运行时客户端类型，比如 `openai` 或 `localhost`。
+- `provider_profile` 决定读哪组凭据和默认模型。
+
+### Example D: provider_profile-driven config
+
+```json
+{
+	"provider_profile": "qwen",
+	"role_name": "Qwen Agent",
+	"temperature": 0.2
+}
+```
+
+对应 `.env` 示例 / Matching `.env` example:
+
+```dotenv
+QWEN_API_KEY=your-key
+QWEN_BASE_URL=https://your-qwen-compatible-endpoint/v1
+QWEN_DEFAULT_MODEL=qwen-plus
+```
 
 ### Example A: role_name and behavior flags
 
@@ -194,10 +343,16 @@ English:
 
 ## 8. Current Constraints / 当前限制
 
-- 当前 `Custom Code` 运行于受限子进程中，不支持任意导入模块。
-- 禁止 `import`、`with`、`raise`、`global`、`nonlocal` 等语法。
+- 当前 `Custom Code` 运行于受限子进程中，不支持任意导入模块（仅支持白名单 import）。
+- 禁止 `with`、`raise`、`global`、`nonlocal` 等语法。
 - 更适合写轻量路由、规则判断、格式整理、简单工具编排前置逻辑。
 - 如果你的逻辑已经复杂到需要大量依赖或外部 IO，更适合沉到 Tool / MCP / 后端服务实现。
+
+补充（最新）/ Update:
+
+- 目前已支持**受控 import**：允许导入白名单模块 `json`、`re`、`math`、`time`、`datetime`、`httpx`、`requests`。
+- `requests` 在沙箱中映射到 `httpx` 兼容层（可用于常见 `get/post` 场景）。
+- 白名单外模块会报错：`Import not allowed: <module>`。
 
 ## 9. Troubleshooting / 常见问题
 
@@ -222,6 +377,24 @@ role_name = config.get("role_name", "Code Agent")
 
 - 想让大模型按某种角色和话术回复，用 `system_prompt` + `llm`。
 - 想自己控制分支、规则、返回结构，用 `custom_code` + `code`。
+
+### Q4. 如何实现"部分用工具，部分用大模型"？
+
+使用混合模式：在 `run_mode=code` 的 Custom Code 中，根据输入类型做判断。如果是你的工具能处理的，就 `call_tool(...)`；否则返回 `{"use_llm": True}`，Backend 会自动调用 LLM。
+
+示例见上面的"Hybrid mode: Tools + LLM fallback"。
+
+### Q5. 为什么 LLM 回退没有被触发？
+
+可能原因：
+
+- Agent 没有配置 `model_provider` 和 `model_name`。
+- 返回值不是 `{"use_llm": True}` 的标准格式。
+- 检查后端日志是否有错误提示。
+
+### Q6. 工具调用标签在哪里显示？
+
+在 Workbench 的 Conversation 区域，Assistant 的回复上方会显示一个**橙色标签**，表示调用的工具名。如果没有标签，说明这次回复没有调用工具（可能是直接返回结果或使用了 LLM 回退）。
 
 ## 10. File Path / 文档路径
 

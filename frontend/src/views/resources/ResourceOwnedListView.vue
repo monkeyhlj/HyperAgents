@@ -28,19 +28,21 @@
         <template #project="{ row }">
           <Tag color="gold">{{ row.project_name }}</Tag>
         </template>
+        <template #toolRuntime="{ row }">
+          {{ toolConfig(row).runtime || '-' }}
+        </template>
+        <template #toolFunction="{ row }">
+          {{ toolConfig(row).entrypoint || '-' }}
+        </template>
+        <template #toolShared="{ row }">
+          <Tag :color="toolConfig(row).shared_in_project === false ? 'default' : 'green'">
+            {{ toolConfig(row).shared_in_project === false ? 'false' : 'true' }}
+          </Tag>
+        </template>
         <template #action="{ row }">
           <Space>
             <Button size="small" @click="openDetail(row)">Detail</Button>
             <Button size="small" type="primary" ghost @click="openEditPage(row)">Edit</Button>
-            <Button
-              size="small"
-              ghost
-              type="warning"
-              :disabled="row.kind !== 'agent'"
-              @click="openCodeVersions(row)"
-            >
-              Code Versions
-            </Button>
             <Button size="small" type="error" ghost @click="openDelete(row)">Delete</Button>
           </Space>
         </template>
@@ -53,9 +55,12 @@
         <DescriptionsItem label="Name">{{ current.name }}</DescriptionsItem>
         <DescriptionsItem label="Project">{{ current.project_name }}</DescriptionsItem>
         <DescriptionsItem label="Visibility">{{ current.visibility }}</DescriptionsItem>
-        <DescriptionsItem label="Model Provider">{{ current.model_provider || '-' }}</DescriptionsItem>
-        <DescriptionsItem label="Model Name">{{ current.model_name || '-' }}</DescriptionsItem>
-        <DescriptionsItem label="Provider Profile">{{ current.provider_profile || '-' }}</DescriptionsItem>
+        <DescriptionsItem v-if="resourceKind === 'tool'" label="Tool Runtime">{{ toolConfig(current).runtime || '-' }}</DescriptionsItem>
+        <DescriptionsItem v-if="resourceKind === 'tool'" label="Function Name">{{ toolConfig(current).entrypoint || '-' }}</DescriptionsItem>
+        <DescriptionsItem v-if="resourceKind === 'tool'" label="Shared In Project">{{ toolConfig(current).shared_in_project === false ? 'false' : 'true' }}</DescriptionsItem>
+        <DescriptionsItem v-if="resourceKind !== 'tool'" label="Model Provider">{{ current.model_provider || '-' }}</DescriptionsItem>
+        <DescriptionsItem v-if="resourceKind !== 'tool'" label="Model Name">{{ current.model_name || '-' }}</DescriptionsItem>
+        <DescriptionsItem v-if="resourceKind !== 'tool'" label="Provider Profile">{{ current.provider_profile || '-' }}</DescriptionsItem>
         <DescriptionsItem label="Description">{{ current.description || '-' }}</DescriptionsItem>
         <DescriptionsItem label="Resource ID">{{ current.id }}</DescriptionsItem>
       </Descriptions>
@@ -70,26 +75,6 @@
       </template>
     </Modal>
 
-    <Drawer v-model="showCodeVersions" :title="`Code Versions - ${current?.name || ''}`" width="760" :mask-closable="false">
-      <Alert show-icon>Publish current custom code as immutable version, then rollback any version when needed.</Alert>
-      <Form label-position="top" style="margin-top: 10px">
-        <FormItem label="Publish Note">
-          <Input v-model="publishNote" maxlength="200" placeholder="e.g. Add MCP fallback logic" />
-        </FormItem>
-      </Form>
-      <Space style="margin-bottom: 10px">
-        <Button :loading="publishing" type="primary" @click="publishCurrentCode">Publish Current Code</Button>
-        <Button :loading="loadingVersions" @click="loadCodeVersions">Refresh</Button>
-      </Space>
-      <Table :columns="versionColumns" :data="codeVersions" stripe>
-        <template #code="{ row }">
-          <pre class="code-preview">{{ row.code }}</pre>
-        </template>
-        <template #versionAction="{ row }">
-          <Button size="small" :loading="rollingBack" @click="rollbackVersion(row)">Rollback</Button>
-        </template>
-      </Table>
-    </Drawer>
   </div>
 </template>
 
@@ -110,13 +95,7 @@ const projectQuery = ref("");
 
 const showDetail = ref(false);
 const showDelete = ref(false);
-const showCodeVersions = ref(false);
 const current = ref(null);
-const codeVersions = ref([]);
-const loadingVersions = ref(false);
-const publishing = ref(false);
-const rollingBack = ref(false);
-const publishNote = ref("");
 
 const pageTitle = computed(() => route.meta.title || "Resources");
 const resourceKind = computed(() => route.meta.kind || null);
@@ -133,25 +112,36 @@ const kindLabel = computed(() => {
   return map[resourceKind.value] || "Resource";
 });
 
-const columns = [
-  { title: "Kind", key: "kind", width: 120 },
-  { title: "Name", key: "name", minWidth: 180 },
-  { title: "Project", slot: "project", minWidth: 160 },
-  { title: "Visibility", key: "visibility", width: 120 },
-  { title: "Model Provider", key: "model_provider", minWidth: 140 },
-  { title: "Model Name", key: "model_name", minWidth: 160 },
-  { title: "ID", key: "id", minWidth: 280 },
-  { title: "Action", slot: "action", minWidth: 200 }
-];
+const columns = computed(() => {
+  if (resourceKind.value === "tool") {
+    return [
+      { title: "Kind", key: "kind", width: 100 },
+      { title: "Name", key: "name", minWidth: 180 },
+      { title: "Project", slot: "project", minWidth: 160 },
+      { title: "Visibility", key: "visibility", width: 120 },
+      { title: "Runtime", slot: "toolRuntime", width: 120 },
+      { title: "Function", slot: "toolFunction", minWidth: 150 },
+      { title: "Shared", slot: "toolShared", width: 100 },
+      { title: "ID", key: "id", minWidth: 260 },
+      { title: "Action", slot: "action", minWidth: 200 }
+    ];
+  }
 
-const versionColumns = [
-  { title: "Version ID", key: "version_id", minWidth: 220 },
-  { title: "Note", key: "note", minWidth: 180 },
-  { title: "Created By", key: "created_by", width: 140 },
-  { title: "Created At", key: "created_at", minWidth: 180 },
-  { title: "Code", slot: "code", minWidth: 260 },
-  { title: "Action", slot: "versionAction", width: 110 }
-];
+  return [
+    { title: "Kind", key: "kind", width: 120 },
+    { title: "Name", key: "name", minWidth: 180 },
+    { title: "Project", slot: "project", minWidth: 160 },
+    { title: "Visibility", key: "visibility", width: 120 },
+    { title: "Model Provider", key: "model_provider", minWidth: 140 },
+    { title: "Model Name", key: "model_name", minWidth: 160 },
+    { title: "ID", key: "id", minWidth: 280 },
+    { title: "Action", slot: "action", minWidth: 200 }
+  ];
+});
+
+function toolConfig(resource) {
+  return (resource && resource.config) || {};
+}
 
 async function loadData() {
   loading.value = true;
@@ -202,63 +192,6 @@ function openDelete(row) {
   showDelete.value = true;
 }
 
-async function openCodeVersions(row) {
-  if (row.kind !== "agent") {
-    Message.warning("Code version management is available for agents only");
-    return;
-  }
-  current.value = row;
-  showCodeVersions.value = true;
-  publishNote.value = "";
-  await loadCodeVersions();
-}
-
-async function loadCodeVersions() {
-  if (!current.value) {
-    return;
-  }
-  loadingVersions.value = true;
-  try {
-    codeVersions.value = await api.listResourceCodeVersions(current.value.id);
-  } catch (error) {
-    Message.error(error.message || "Load code versions failed");
-  } finally {
-    loadingVersions.value = false;
-  }
-}
-
-async function publishCurrentCode() {
-  if (!current.value) {
-    return;
-  }
-  publishing.value = true;
-  try {
-    codeVersions.value = await api.publishResourceCodeVersion(current.value.id, { note: publishNote.value || null });
-    Message.success("Code version published");
-    await loadData();
-  } catch (error) {
-    Message.error(error.message || "Publish code version failed");
-  } finally {
-    publishing.value = false;
-  }
-}
-
-async function rollbackVersion(item) {
-  if (!current.value) {
-    return;
-  }
-  rollingBack.value = true;
-  try {
-    codeVersions.value = await api.rollbackResourceCodeVersion(current.value.id, item.version_id);
-    Message.success("Rollback succeeded");
-    await loadData();
-  } catch (error) {
-    Message.error(error.message || "Rollback failed");
-  } finally {
-    rollingBack.value = false;
-  }
-}
-
 async function confirmDelete() {
   if (!current.value) {
     return;
@@ -288,14 +221,3 @@ watch(
 
 onMounted(loadData);
 </script>
-
-<style scoped>
-.code-preview {
-  margin: 0;
-  max-height: 140px;
-  overflow: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-size: 12px;
-}
-</style>

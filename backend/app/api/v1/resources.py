@@ -6,8 +6,6 @@ from app.models.enums import ResourceKind, Visibility
 from app.runtime.code_executor import code_runtime_executor
 from app.runtime.executor import runtime_executor
 from app.schemas.resource import (
-    CodeVersionPublishRequest,
-    CodeVersionRecord,
     OwnedResource,
     Resource,
     ResourceCreate,
@@ -83,6 +81,12 @@ def preview_resource_chat(
 ) -> ResourcePreviewChatResponse:
     store.assert_project_member(db, payload.project_id, user_id)
     if (payload.run_mode or "llm").strip().lower() == "code":
+        tools = store.list_tool_resources_for_project(
+            db,
+            project_id=payload.project_id,
+            tool_ids=list((payload.config or {}).get("tool_ids") or []),
+            actor=user_id,
+        )
         text = code_runtime_executor.run(
             payload.text,
             custom_code=payload.custom_code or "",
@@ -91,6 +95,7 @@ def preview_resource_chat(
                 "user_id": user_id,
                 "config": payload.config,
             },
+            tools=tools,
         )
     else:
         text = runtime_executor.run_chat(
@@ -147,38 +152,3 @@ def delete_resource(
 ) -> dict[str, bool]:
     store.delete_resource(db, resource_id=resource_id, actor=user_id)
     return {"ok": True}
-
-
-@router.get("/{resource_id}/code-versions", response_model=list[CodeVersionRecord])
-def list_code_versions(
-    resource_id: str,
-    user_id: str = Depends(get_current_user_id),
-    db: Session = Depends(get_db),
-) -> list[CodeVersionRecord]:
-    return store.list_resource_code_versions(db, resource_id=resource_id, actor=user_id)
-
-
-@router.post("/{resource_id}/code-versions/publish", response_model=list[CodeVersionRecord])
-def publish_code_version(
-    resource_id: str,
-    payload: CodeVersionPublishRequest,
-    user_id: str = Depends(get_current_user_id),
-    db: Session = Depends(get_db),
-) -> list[CodeVersionRecord]:
-    return store.publish_resource_code_version(
-        db,
-        resource_id=resource_id,
-        actor=user_id,
-        note=payload.note,
-        code=payload.code,
-    )
-
-
-@router.post("/{resource_id}/code-versions/{version_id}/rollback", response_model=list[CodeVersionRecord])
-def rollback_code_version(
-    resource_id: str,
-    version_id: str,
-    user_id: str = Depends(get_current_user_id),
-    db: Session = Depends(get_db),
-) -> list[CodeVersionRecord]:
-    return store.rollback_resource_code_version(db, resource_id=resource_id, version_id=version_id, actor=user_id)

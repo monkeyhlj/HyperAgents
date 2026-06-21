@@ -1,11 +1,37 @@
 [
   {
+    "template_id": "agent-openai-default",
+    "kind": "agent",
+    "name": "OpenAI Assistant",
+    "description": "Default OpenAI-compatible assistant template. Uses OPENAI_API_KEY and OPENAI_BASE_URL from .env.",
+    "visibility": "project",
+    "model_provider": "openai",
+    "model_name": "gpt-4o-mini",
+    "provider_profile": "openai",
+    "config": {
+      "system_prompt": "You are a helpful AI assistant."
+    }
+  },
+  {
+    "template_id": "agent-localhost-default",
+    "kind": "agent",
+    "name": "Local LLM Assistant",
+    "description": "Local LLM assistant template. Uses LOCALHOST_LLM_BASE_URL from .env (e.g., Ollama/vLLM).",
+    "visibility": "project",
+    "model_provider": "localhost",
+    "model_name": "qwen2.5:7b",
+    "provider_profile": null,
+    "config": {
+      "system_prompt": "You are a helpful local AI assistant."
+    }
+  },
+  {
     "template_id": "agent-zhipu-default",
     "kind": "agent",
     "name": "Zhipu Assistant",
-    "description": "Default Zhipu-compatible assistant template. Requires ZHIPU_API_KEY and ZHIPU_BASE_URL from .env.",
+    "description": "Zhipu-compatible assistant template. Requires ZHIPU_API_KEY, ZHIPU_BASE_URL, and ZHIPU_DEFAULT_MODEL from .env.",
     "visibility": "project",
-    "model_provider": "zhipu",
+      "model_provider": "zhipu",
     "model_name": "glm-5.1",
     "provider_profile": "zhipu",
     "config": {

@@ -16,6 +16,7 @@ class ResourceCreate(BaseModel):
 
 
 class ResourceUpdate(BaseModel):
+    project_id: str | None = Field(default=None, max_length=60)
     name: str | None = Field(default=None, min_length=2, max_length=120)
     description: str | None = Field(default=None, max_length=1000)
     visibility: Visibility | None = None
@@ -70,6 +71,7 @@ class ChatMessageResponse(BaseModel):
     role: str
     text: str
     run_id: str | None = None
+    used_tools: list[str] = []
 
 
 class ChatSessionRecord(BaseModel):
@@ -140,16 +142,3 @@ class ResourcePreviewChatRequest(BaseModel):
 
 class ResourcePreviewChatResponse(BaseModel):
     text: str
-
-
-class CodeVersionRecord(BaseModel):
-    version_id: str
-    note: str
-    code: str
-    created_by: str
-    created_at: str
-
-
-class CodeVersionPublishRequest(BaseModel):
-    note: str | None = Field(default=None, max_length=200)
-    code: str | None = None

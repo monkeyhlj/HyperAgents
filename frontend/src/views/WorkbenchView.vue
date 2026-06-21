@@ -68,7 +68,12 @@
         <TimelineItem v-for="(item, index) in history" :key="index" :color="item.role === 'user' ? 'blue' : 'green'">
           <p><strong>{{ item.role }}</strong></p>
           <p v-if="item.role === 'user'">{{ item.text }}</p>
-          <div v-else class="markdown-content" v-html="renderMarkdown(item.text)" @click="onMarkdownClick"></div>
+          <div v-else>
+            <div v-if="item.used_tools && item.used_tools.length > 0" style="margin-bottom: 8px">
+              <Tag v-for="tool in item.used_tools" :key="tool" color="orange">{{ tool }}</Tag>
+            </div>
+            <div class="markdown-content" v-html="renderMarkdown(item.text)" @click="onMarkdownClick"></div>
+          </div>
         </TimelineItem>
       </Timeline>
     </Card>
@@ -340,7 +345,7 @@ async function sendMessage() {
       text: textToSend,
       agent_id: agentId.value || null
     });
-    history.value.push({ role: data.role, text: data.text });
+    history.value.push({ role: data.role, text: data.text, used_tools: data.used_tools || [] });
     message.value = "";
     await loadRuns();
   } catch (error) {

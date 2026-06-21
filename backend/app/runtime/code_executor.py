@@ -16,29 +16,47 @@ _ALLOWED_BUILTINS: dict[str, Any] = {
     "abs": abs,
     "all": all,
     "any": any,
+    "BaseException": BaseException,
     "bool": bool,
+    "callable": callable,
     "dict": dict,
     "enumerate": enumerate,
+    "Exception": Exception,
     "float": float,
+    "isinstance": isinstance,
+    "issubclass": issubclass,
     "int": int,
+    "KeyError": KeyError,
     "len": len,
     "list": list,
     "max": max,
     "min": min,
+    "RuntimeError": RuntimeError,
     "range": range,
     "round": round,
     "set": set,
     "sorted": sorted,
     "str": str,
     "sum": sum,
+    "TypeError": TypeError,
+    "type": type,
     "tuple": tuple,
+    "ValueError": ValueError,
     "zip": zip,
+}
+
+_ALLOWED_IMPORT_NAMES = {
+    "datetime",
+    "httpx",
+    "json",
+    "math",
+    "re",
+    "requests",
+    "time",
 }
 
 
 _FORBIDDEN_AST_NODES = (
-    ast.Import,
-    ast.ImportFrom,
     ast.With,
     ast.AsyncWith,
     ast.Raise,
@@ -50,41 +68,88 @@ _FORBIDDEN_AST_NODES = (
 _RUNNER_SCRIPT = r"""
 import ast
 import base64
+import datetime
+import httpx
 import json
+import math
 import sys
+import re
+import time
 
 ALLOWED_BUILTINS = {
     "abs": abs,
     "all": all,
     "any": any,
+    "BaseException": BaseException,
     "bool": bool,
+    "callable": callable,
     "dict": dict,
     "enumerate": enumerate,
+    "Exception": Exception,
     "float": float,
+    "isinstance": isinstance,
+    "issubclass": issubclass,
     "int": int,
+    "KeyError": KeyError,
     "len": len,
     "list": list,
     "max": max,
     "min": min,
+    "RuntimeError": RuntimeError,
     "range": range,
     "round": round,
     "set": set,
     "sorted": sorted,
     "str": str,
     "sum": sum,
+    "TypeError": TypeError,
+    "type": type,
     "tuple": tuple,
+    "ValueError": ValueError,
     "zip": zip,
 }
 
+ALLOWED_IMPORT_NAMES = {
+    "datetime",
+    "httpx",
+    "json",
+    "math",
+    "re",
+    "requests",
+    "time",
+}
+
+ALLOWED_IMPORT_MODULES = {
+    "datetime": datetime,
+    "httpx": httpx,
+    "json": json,
+    "math": math,
+    "re": re,
+    "requests": httpx,
+    "time": time,
+}
+
 FORBIDDEN_AST_NODES = (
-    ast.Import,
-    ast.ImportFrom,
     ast.With,
     ast.AsyncWith,
     ast.Raise,
     ast.Global,
     ast.Nonlocal,
 )
+
+
+def safe_import(name, globals=None, locals=None, fromlist=(), level=0):
+    if level not in (0, None):
+        raise ImportError("Relative imports are not allowed")
+    module_name = str(name or "").strip()
+    base_name = module_name.split(".")[0]
+    module = ALLOWED_IMPORT_MODULES.get(base_name)
+    if module is None:
+        raise ImportError(f"Import not allowed: {module_name}")
+    return module
+
+
+ALLOWED_BUILTINS["__import__"] = safe_import
 
 
 def normalize_result(value):
@@ -103,6 +168,62 @@ def validate_code(custom_code):
     for node in ast.walk(tree):
         if isinstance(node, FORBIDDEN_AST_NODES):
             raise RuntimeError(f"Forbidden syntax: {node.__class__.__name__}")
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                base_name = str(alias.name or "").split(".")[0]
+                if base_name not in ALLOWED_IMPORT_NAMES:
+                    raise RuntimeError(f"Import not allowed: {alias.name}")
+        if isinstance(node, ast.ImportFrom):
+            if not node.module:
+                raise RuntimeError("Relative imports are not allowed")
+            base_name = str(node.module).split(".")[0]
+            if base_name not in ALLOWED_IMPORT_NAMES:
+                raise RuntimeError(f"Import not allowed: {node.module}")
+
+
+def execute_tool(tools, tool_name, input_data, context):
+    tool_map = {
+        str(item.get("name") or "").strip(): item
+        for item in (tools or [])
+        if str(item.get("name") or "").strip()
+    }
+    tool_spec = tool_map.get(str(tool_name).strip())
+    if not tool_spec:
+        raise RuntimeError(f"Tool not found: {tool_name}")
+
+    runtime = str(tool_spec.get("runtime") or "python").strip().lower()
+    if runtime != "python":
+        raise RuntimeError(f"Unsupported tool runtime: {runtime}")
+
+    entrypoint = str(tool_spec.get("entrypoint") or "run").strip() or "run"
+    tool_code = str(tool_spec.get("code") or "")
+    if not tool_code.strip():
+        raise RuntimeError(f"Tool code is empty: {tool_name}")
+
+    validate_code(tool_code)
+
+    tool_globals = {
+        "__builtins__": ALLOWED_BUILTINS,
+        "httpx": httpx,
+        "json": json,
+        "re": re,
+        "requests": httpx,
+    }
+    tool_locals = {}
+    exec(compile(tool_code, f"<tool:{tool_name}>", "exec"), tool_globals, tool_locals)
+
+    tool_func = tool_locals.get(entrypoint)
+    if not callable(tool_func):
+        raise RuntimeError(f"Tool entrypoint not callable: {tool_name}.{entrypoint}")
+
+    tool_context = dict(context or {})
+    tool_context["tool"] = {
+        "name": tool_spec.get("name"),
+        "runtime": runtime,
+        "entrypoint": entrypoint,
+    }
+    safe_input = input_data if isinstance(input_data, dict) else {"value": input_data}
+    return tool_func(safe_input, tool_context)
 
 
 def main():
@@ -111,15 +232,31 @@ def main():
     input_text = payload.get("input_text", "")
     custom_code = payload.get("custom_code", "")
     context = payload.get("context", {})
+    tools = payload.get("tools", [])
+    tool_calls = []
 
     if not str(custom_code).strip():
         raise RuntimeError("custom_code is empty")
 
     validate_code(custom_code)
 
+    def call_tool(tool_name, input_data=None):
+        tool_name_text = str(tool_name).strip()
+        result = execute_tool(tools, tool_name_text, input_data or {}, context)
+        tool_calls.append(tool_name_text)
+        return result
+
+    def list_tools():
+        return [str(item.get("name") or "") for item in tools if str(item.get("name") or "").strip()]
+
     safe_globals = {
         "__builtins__": ALLOWED_BUILTINS,
+        "httpx": httpx,
         "json": json,
+        "re": re,
+        "requests": httpx,
+        "call_tool": call_tool,
+        "list_tools": list_tools,
     }
     safe_locals = {}
 
@@ -134,7 +271,11 @@ def main():
     else:
         raise RuntimeError("custom_code must define run(input_text, context) or agent_main(...) or RESULT")
 
-    print(json.dumps({"ok": True, "result": normalize_result(result)}))
+    used_tools_list = []
+    if tool_calls:
+        used_tools_list = list(dict.fromkeys(tool_calls))
+
+    print(json.dumps({"ok": True, "result": normalize_result(result), "used_tools": used_tools_list}))
 
 
 if __name__ == "__main__":
@@ -150,7 +291,13 @@ class CodeExecutionError(RuntimeError):
 
 
 class CodeRuntimeExecutor:
-    def run(self, input_text: str, custom_code: str, context: dict | None = None) -> str:
+    def run(
+        self,
+        input_text: str,
+        custom_code: str,
+        context: dict | None = None,
+        tools: list[dict] | None = None,
+    ) -> str:
         if not custom_code.strip():
             raise CodeExecutionError("custom_code is empty")
 
@@ -159,6 +306,7 @@ class CodeRuntimeExecutor:
             "input_text": input_text,
             "custom_code": custom_code,
             "context": dict(context or {}),
+            "tools": list(tools or []),
         }
         encoded_payload = base64.b64encode(json.dumps(payload, ensure_ascii=False).encode("utf-8")).decode("ascii")
         runner_path = None
@@ -190,10 +338,11 @@ class CodeRuntimeExecutor:
             if not data.get("ok"):
                 raise CodeExecutionError(str(data.get("error") or "Code execution failed"))
 
-            result = str(data.get("result") or "")
-            if len(result) > settings.code_execution_max_output_chars:
-                return result[: settings.code_execution_max_output_chars] + "\n...[truncated]"
-            return result
+            result_text = str(data.get("result") or "")
+            used_tools = list(data.get("used_tools") or [])
+            if len(result_text) > settings.code_execution_max_output_chars:
+                result_text = result_text[: settings.code_execution_max_output_chars] + "\n...[truncated]"
+            return {"text": result_text, "used_tools": used_tools}
         except subprocess.TimeoutExpired as exc:
             raise CodeExecutionError(
                 f"Code execution timeout after {settings.code_execution_timeout_seconds}s"
@@ -214,6 +363,17 @@ class CodeRuntimeExecutor:
         for node in ast.walk(tree):
             if isinstance(node, _FORBIDDEN_AST_NODES):
                 raise CodeExecutionError(f"Forbidden syntax: {node.__class__.__name__}")
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    base_name = str(alias.name or "").split(".")[0]
+                    if base_name not in _ALLOWED_IMPORT_NAMES:
+                        raise CodeExecutionError(f"Import not allowed: {alias.name}")
+            if isinstance(node, ast.ImportFrom):
+                if not node.module:
+                    raise CodeExecutionError("Relative imports are not allowed")
+                base_name = str(node.module).split(".")[0]
+                if base_name not in _ALLOWED_IMPORT_NAMES:
+                    raise CodeExecutionError(f"Import not allowed: {node.module}")
 
     def _normalize_result(self, value: Any) -> str:
         if value is None:

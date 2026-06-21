@@ -19,11 +19,31 @@ from app.db.models import (
 from app.models.enums import ResourceKind, Visibility
 from app.schemas.auth import UserProfile, UserSearchItem
 from app.schemas.project import Project, ProjectUpdate
-from app.schemas.resource import CodeVersionRecord, OwnedResource, Resource, ResourceUpdate
+from app.schemas.resource import OwnedResource, Resource, ResourceUpdate
 from app.services.auth_utils import hash_password, verify_password
 
 
 class PostgresStore:
+    @staticmethod
+    def _normalize_resource_payload(
+        kind: ResourceKind,
+        model_provider: str | None,
+        model_name: str | None,
+        provider_profile: str | None,
+        config: dict,
+    ) -> tuple[str | None, str | None, str | None, dict]:
+        normalized_config = dict(config or {})
+        if kind == ResourceKind.AGENT:
+            if provider_profile:
+                normalized_config["provider_profile"] = provider_profile
+            return model_provider, model_name, provider_profile, normalized_config
+
+        # Non-agent resources should not carry provider profile in config.
+        for key in ("provider_profile",):
+            normalized_config.pop(key, None)
+
+        return None, None, None, normalized_config
+
     def create_user(
         self,
         db: Session,
@@ -291,9 +311,13 @@ class PostgresStore:
         provider_profile: str | None,
         config: dict,
     ) -> Resource:
-        resource_config = dict(config or {})
-        if provider_profile:
-            resource_config["provider_profile"] = provider_profile
+        model_provider, model_name, provider_profile, resource_config = self._normalize_resource_payload(
+            kind=kind,
+            model_provider=model_provider,
+            model_name=model_name,
+            provider_profile=provider_profile,
+            config=config,
+        )
         resource = ResourceModel(
             project_id=project_id,
             owner_id=owner_id,
@@ -319,6 +343,10 @@ class PostgresStore:
         if actor != project.owner_id and actor != resource.owner_id:
             raise HTTPException(status_code=403, detail="No permission to edit resource")
 
+        if payload.project_id is not None and payload.project_id != resource.project_id:
+            new_project = self.assert_project_member(db, payload.project_id, actor)
+            resource.project_id = payload.project_id
+
         if payload.name is not None:
             resource.name = payload.name
         if payload.description is not None:
@@ -326,18 +354,36 @@ class PostgresStore:
         if payload.visibility is not None:
             resource.visibility = payload.visibility.value
         if payload.model_provider is not None:
-            resource.model_provider = payload.model_provider
+            if resource.kind == ResourceKind.AGENT.value:
+                resource.model_provider = payload.model_provider
+            else:
+                resource.model_provider = None
         if payload.model_name is not None:
-            resource.model_name = payload.model_name
+            if resource.kind == ResourceKind.AGENT.value:
+                resource.model_name = payload.model_name
+            else:
+                resource.model_name = None
 
         config = dict(resource.config or {})
         if payload.config is not None:
             config = dict(payload.config)
-        if payload.provider_profile is not None:
-            if payload.provider_profile:
-                config["provider_profile"] = payload.provider_profile
-            else:
-                config.pop("provider_profile", None)
+
+        if resource.kind == ResourceKind.AGENT.value:
+            if payload.provider_profile is not None:
+                if payload.provider_profile:
+                    config["provider_profile"] = payload.provider_profile
+                else:
+                    config.pop("provider_profile", None)
+        else:
+            _, _, _, config = self._normalize_resource_payload(
+                kind=ResourceKind(resource.kind),
+                model_provider=None,
+                model_name=None,
+                provider_profile=None,
+                config=config,
+            )
+            resource.model_provider = None
+            resource.model_name = None
         resource.config = config
         resource.updated_at = datetime.utcnow()
         db.commit()
@@ -657,82 +703,6 @@ class PostgresStore:
             )
         return result
 
-    def list_resource_code_versions(self, db: Session, resource_id: str, actor: str) -> list[CodeVersionRecord]:
-        resource = self._get_resource_for_actor(db, resource_id, actor)
-        versions = list((resource.config or {}).get("code_versions") or [])
-        versions.sort(key=lambda item: item.get("created_at", ""), reverse=True)
-        return [
-            CodeVersionRecord(
-                version_id=str(item.get("version_id") or ""),
-                note=str(item.get("note") or ""),
-                code=str(item.get("code") or ""),
-                created_by=str(item.get("created_by") or ""),
-                created_at=str(item.get("created_at") or ""),
-            )
-            for item in versions
-            if item.get("version_id")
-        ]
-
-    def publish_resource_code_version(
-        self,
-        db: Session,
-        resource_id: str,
-        actor: str,
-        note: str | None = None,
-        code: str | None = None,
-    ) -> list[CodeVersionRecord]:
-        resource = self._get_resource_for_actor(db, resource_id, actor)
-        config = dict(resource.config or {})
-
-        source_code = (code if code is not None else config.get("custom_code") or "").strip()
-        if not source_code:
-            raise HTTPException(status_code=400, detail="No code to publish")
-
-        version = {
-            "version_id": str(uuid4()),
-            "note": (note or "publish").strip() or "publish",
-            "code": source_code,
-            "created_by": actor,
-            "created_at": datetime.utcnow().isoformat(),
-        }
-
-        versions = list(config.get("code_versions") or [])
-        versions.append(version)
-        config["code_versions"] = versions
-        config["custom_code"] = source_code
-        config["run_mode"] = "code"
-        config["published_version_id"] = version["version_id"]
-
-        resource.config = config
-        resource.updated_at = datetime.utcnow()
-        db.commit()
-        db.refresh(resource)
-        return self.list_resource_code_versions(db, resource_id, actor)
-
-    def rollback_resource_code_version(
-        self,
-        db: Session,
-        resource_id: str,
-        version_id: str,
-        actor: str,
-    ) -> list[CodeVersionRecord]:
-        resource = self._get_resource_for_actor(db, resource_id, actor)
-        config = dict(resource.config or {})
-        versions = list(config.get("code_versions") or [])
-
-        target = next((item for item in versions if item.get("version_id") == version_id), None)
-        if not target:
-            raise HTTPException(status_code=404, detail="Code version not found")
-
-        config["custom_code"] = str(target.get("code") or "")
-        config["run_mode"] = "code"
-        config["published_version_id"] = version_id
-        resource.config = config
-        resource.updated_at = datetime.utcnow()
-        db.commit()
-        db.refresh(resource)
-        return self.list_resource_code_versions(db, resource_id, actor)
-
     def get_chat_session_for_user(self, db: Session, session_id: str, user_id: str) -> ChatSessionModel:
         session = db.get(ChatSessionModel, session_id)
         if not session:
@@ -767,6 +737,43 @@ class PostgresStore:
         if resource.kind != ResourceKind.AGENT.value:
             raise HTTPException(status_code=400, detail="Provided agent_id is not an agent resource")
         return resource
+
+    def list_tool_resources_for_project(
+        self,
+        db: Session,
+        project_id: str,
+        tool_ids: list[str],
+        actor: str,
+    ) -> list[dict]:
+        if not tool_ids:
+            return []
+
+        self.assert_project_member(db, project_id, actor)
+        result: list[dict] = []
+        for tool_id in tool_ids:
+            resource = db.get(ResourceModel, tool_id)
+            if not resource or resource.project_id != project_id:
+                continue
+            if resource.kind != ResourceKind.TOOL.value:
+                continue
+
+            visibility = Visibility(resource.visibility)
+            if visibility == Visibility.PRIVATE and resource.owner_id != actor:
+                continue
+
+            config = dict(resource.config or {})
+            result.append(
+                {
+                    "id": resource.id,
+                    "name": resource.name,
+                    "runtime": config.get("runtime") or "python",
+                    "entrypoint": config.get("entrypoint") or "run",
+                    "code": config.get("code") or "",
+                    "input_schema": config.get("input_schema") or {},
+                    "output_schema": config.get("output_schema") or {},
+                }
+            )
+        return result
 
     def _to_project_schema(self, db: Session, project: ProjectModel) -> Project:
         members_stmt = select(ProjectMemberModel.user_id).where(ProjectMemberModel.project_id == project.id)

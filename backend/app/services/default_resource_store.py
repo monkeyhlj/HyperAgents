@@ -1,5 +1,4 @@
 import json
-from functools import lru_cache
 from pathlib import Path
 from uuid import NAMESPACE_URL, uuid5
 
@@ -11,7 +10,6 @@ DEFAULT_RESOURCES_FILE = Path(__file__).resolve().parents[1] / "core" / "default
 
 
 class DefaultResourceStore:
-    @lru_cache(maxsize=1)
     def list_templates(self) -> list[ResourceTemplate]:
         if not DEFAULT_RESOURCES_FILE.exists():
             return []
