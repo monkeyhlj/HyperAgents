@@ -9,6 +9,7 @@ from app.db.models import (
     ChatMessageModel,
     ChatSessionModel,
     ProjectMemberPermissionModel,
+    ProviderConnectionModel,
     ProjectMemberModel,
     ProjectModel,
     ResourceModel,
@@ -19,8 +20,10 @@ from app.db.models import (
 from app.models.enums import ResourceKind, Visibility
 from app.schemas.auth import UserProfile, UserSearchItem
 from app.schemas.project import Project, ProjectUpdate
+from app.schemas.provider_connection import ProviderConnectionCreate, ProviderConnectionRecord, ProviderConnectionUpdate
 from app.schemas.resource import OwnedResource, Resource, ResourceUpdate
 from app.services.auth_utils import hash_password, verify_password
+from app.services.secret_box import decrypt_secret, encrypt_secret, mask_secret
 
 
 class PostgresStore:
@@ -30,16 +33,19 @@ class PostgresStore:
         model_provider: str | None,
         model_name: str | None,
         provider_profile: str | None,
+        provider_connection_id: str | None,
         config: dict,
     ) -> tuple[str | None, str | None, str | None, dict]:
         normalized_config = dict(config or {})
         if kind == ResourceKind.AGENT:
             if provider_profile:
                 normalized_config["provider_profile"] = provider_profile
+            if provider_connection_id:
+                normalized_config["provider_connection_id"] = provider_connection_id
             return model_provider, model_name, provider_profile, normalized_config
 
         # Non-agent resources should not carry provider profile in config.
-        for key in ("provider_profile",):
+        for key in ("provider_profile", "provider_connection_id"):
             normalized_config.pop(key, None)
 
         return None, None, None, normalized_config
@@ -297,6 +303,152 @@ class PostgresStore:
             db.refresh(project)
         return self._to_project_schema(db, project)
 
+    def add_provider_connection(
+        self,
+        db: Session,
+        project_id: str,
+        owner_id: str,
+        payload: ProviderConnectionCreate,
+    ) -> ProviderConnectionRecord:
+        self.assert_project_member(db, project_id, owner_id)
+        name = payload.name.strip()
+        exists = db.scalar(
+            select(ProviderConnectionModel).where(
+                and_(ProviderConnectionModel.project_id == project_id, ProviderConnectionModel.name == name)
+            )
+        )
+        if exists:
+            raise HTTPException(status_code=409, detail="Provider connection name already exists in project")
+
+        api_key = payload.api_key.strip()
+        connection = ProviderConnectionModel(
+            project_id=project_id,
+            owner_id=owner_id,
+            name=name,
+            provider_type=(payload.provider_type or "openai_compatible").strip().lower(),
+            base_url=payload.base_url.strip().rstrip("/"),
+            api_key_encrypted=encrypt_secret(api_key),
+            api_key_masked=mask_secret(api_key),
+            default_model=(payload.default_model or "").strip() or None,
+            model_list_cache=sorted(set(payload.model_list_cache or [])),
+            last_test_status="untested",
+        )
+        db.add(connection)
+        db.commit()
+        db.refresh(connection)
+        return self._to_provider_connection_schema(connection)
+
+    def list_provider_connections(
+        self,
+        db: Session,
+        project_id: str,
+        actor: str,
+    ) -> list[ProviderConnectionRecord]:
+        self.assert_project_member(db, project_id, actor)
+        stmt = (
+            select(ProviderConnectionModel)
+            .where(ProviderConnectionModel.project_id == project_id)
+            .order_by(ProviderConnectionModel.updated_at.desc())
+        )
+        return [self._to_provider_connection_schema(item) for item in db.scalars(stmt).all()]
+
+    def get_provider_connection(
+        self,
+        db: Session,
+        connection_id: str,
+        actor: str,
+    ) -> ProviderConnectionRecord:
+        connection = self._get_provider_connection_model(db, connection_id, actor)
+        return self._to_provider_connection_schema(connection)
+
+    def get_provider_connection_runtime_config(
+        self,
+        db: Session,
+        connection_id: str,
+        actor: str,
+    ) -> dict:
+        connection = self._get_provider_connection_model(db, connection_id, actor)
+        return {
+            "id": connection.id,
+            "provider_type": connection.provider_type,
+            "base_url": connection.base_url,
+            "api_key": decrypt_secret(connection.api_key_encrypted),
+            "default_model": connection.default_model,
+        }
+
+    def update_provider_connection(
+        self,
+        db: Session,
+        connection_id: str,
+        actor: str,
+        payload: ProviderConnectionUpdate,
+    ) -> ProviderConnectionRecord:
+        connection = self._get_provider_connection_model(db, connection_id, actor)
+        project = self.assert_project_member(db, connection.project_id, actor)
+        if actor != project.owner_id and actor != connection.owner_id:
+            raise HTTPException(status_code=403, detail="No permission to edit provider connection")
+
+        if payload.name is not None:
+            new_name = payload.name.strip()
+            exists = db.scalar(
+                select(ProviderConnectionModel).where(
+                    and_(
+                        ProviderConnectionModel.project_id == connection.project_id,
+                        ProviderConnectionModel.name == new_name,
+                        ProviderConnectionModel.id != connection.id,
+                    )
+                )
+            )
+            if exists:
+                raise HTTPException(status_code=409, detail="Provider connection name already exists in project")
+            connection.name = new_name
+        if payload.provider_type is not None:
+            connection.provider_type = payload.provider_type.strip().lower() or "openai_compatible"
+        if payload.base_url is not None:
+            connection.base_url = payload.base_url.strip().rstrip("/")
+        if payload.api_key is not None:
+            api_key = payload.api_key.strip()
+            if api_key:
+                connection.api_key_encrypted = encrypt_secret(api_key)
+                connection.api_key_masked = mask_secret(api_key)
+        if payload.default_model is not None:
+            connection.default_model = payload.default_model.strip() or None
+        if payload.model_list_cache is not None:
+            connection.model_list_cache = sorted(set(payload.model_list_cache or []))
+        connection.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(connection)
+        return self._to_provider_connection_schema(connection)
+
+    def mark_provider_connection_test_result(
+        self,
+        db: Session,
+        connection_id: str,
+        actor: str,
+        ok: bool,
+        error: str | None = None,
+        models: list[str] | None = None,
+    ) -> ProviderConnectionRecord:
+        connection = self._get_provider_connection_model(db, connection_id, actor)
+        connection.last_test_status = "ok" if ok else "failed"
+        connection.last_test_error = error
+        connection.last_test_at = datetime.utcnow()
+        if models is not None:
+            connection.model_list_cache = sorted(set(models))
+        connection.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(connection)
+        return self._to_provider_connection_schema(connection)
+
+    def delete_provider_connection(self, db: Session, connection_id: str, actor: str) -> None:
+        connection = self._get_provider_connection_model(db, connection_id, actor)
+        project = self.assert_project_member(db, connection.project_id, actor)
+        if actor != project.owner_id and actor != connection.owner_id:
+            raise HTTPException(status_code=403, detail="No permission to delete provider connection")
+        db.delete(connection)
+        db.commit()
+
+
     def add_resource(
         self,
         db: Session,
@@ -309,6 +461,7 @@ class PostgresStore:
         model_provider: str | None,
         model_name: str | None,
         provider_profile: str | None,
+        provider_connection_id: str | None,
         config: dict,
     ) -> Resource:
         model_provider, model_name, provider_profile, resource_config = self._normalize_resource_payload(
@@ -316,8 +469,13 @@ class PostgresStore:
             model_provider=model_provider,
             model_name=model_name,
             provider_profile=provider_profile,
+            provider_connection_id=provider_connection_id,
             config=config,
         )
+        if kind == ResourceKind.AGENT and provider_connection_id:
+            connection = self._get_provider_connection_model(db, provider_connection_id, owner_id)
+            if connection.project_id != project_id:
+                raise HTTPException(status_code=400, detail="Provider connection belongs to another project")
         resource = ResourceModel(
             project_id=project_id,
             owner_id=owner_id,
@@ -344,7 +502,7 @@ class PostgresStore:
             raise HTTPException(status_code=403, detail="No permission to edit resource")
 
         if payload.project_id is not None and payload.project_id != resource.project_id:
-            new_project = self.assert_project_member(db, payload.project_id, actor)
+            self.assert_project_member(db, payload.project_id, actor)
             resource.project_id = payload.project_id
 
         if payload.name is not None:
@@ -374,12 +532,21 @@ class PostgresStore:
                     config["provider_profile"] = payload.provider_profile
                 else:
                     config.pop("provider_profile", None)
+            if payload.provider_connection_id is not None:
+                if payload.provider_connection_id:
+                    connection = self._get_provider_connection_model(db, payload.provider_connection_id, actor)
+                    if connection.project_id != resource.project_id:
+                        raise HTTPException(status_code=400, detail="Provider connection belongs to another project")
+                    config["provider_connection_id"] = payload.provider_connection_id
+                else:
+                    config.pop("provider_connection_id", None)
         else:
             _, _, _, config = self._normalize_resource_payload(
                 kind=ResourceKind(resource.kind),
                 model_provider=None,
                 model_name=None,
                 provider_profile=None,
+                provider_connection_id=None,
                 config=config,
             )
             resource.model_provider = None
@@ -389,7 +556,6 @@ class PostgresStore:
         db.commit()
         db.refresh(resource)
         return self._to_resource_schema(resource)
-
     def get_resource(self, db: Session, resource_id: str, actor: str) -> Resource:
         resource = self._get_resource_for_actor(db, resource_id, actor)
         return self._to_resource_schema(resource)
@@ -814,6 +980,40 @@ class PostgresStore:
             )
         return result
 
+    def _get_provider_connection_model(
+        self,
+        db: Session,
+        connection_id: str,
+        actor: str,
+    ) -> ProviderConnectionModel:
+        connection = db.get(ProviderConnectionModel, connection_id)
+        if not connection:
+            raise HTTPException(status_code=404, detail="Provider connection not found")
+        self.assert_project_member(db, connection.project_id, actor)
+        return connection
+
+    def _to_provider_connection_schema(
+        self,
+        connection: ProviderConnectionModel,
+    ) -> ProviderConnectionRecord:
+        return ProviderConnectionRecord(
+            id=connection.id,
+            project_id=connection.project_id,
+            owner_id=connection.owner_id,
+            name=connection.name,
+            provider_type=connection.provider_type,
+            base_url=connection.base_url,
+            api_key_masked=connection.api_key_masked,
+            default_model=connection.default_model,
+            model_list_cache=list(connection.model_list_cache or []),
+            last_test_status=connection.last_test_status,
+            last_test_error=connection.last_test_error,
+            last_test_at=connection.last_test_at,
+            created_at=connection.created_at,
+            updated_at=connection.updated_at,
+        )
+
+
     def _to_project_schema(self, db: Session, project: ProjectModel) -> Project:
         members_stmt = select(ProjectMemberModel.user_id).where(ProjectMemberModel.project_id == project.id)
         members = list(db.scalars(members_stmt).all())
@@ -872,6 +1072,7 @@ class PostgresStore:
             model_provider=resource.model_provider,
             model_name=resource.model_name,
             provider_profile=(resource.config or {}).get("provider_profile"),
+            provider_connection_id=(resource.config or {}).get("provider_connection_id"),
             config=resource.config,
             source="custom",
             template_id=None,
@@ -929,3 +1130,5 @@ class PostgresStore:
 
 
 store = PostgresStore()
+
+

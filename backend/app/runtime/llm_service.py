@@ -6,6 +6,7 @@ import os
 import re
 
 from app.core.config import settings
+from app.runtime.provider_connections import ProviderConnectionCredentials, test_openai_compatible_chat
 from app.runtime.providers import ProviderGenerationRequest, provider_factory
 
 
@@ -15,6 +16,8 @@ class LLMRequest:
     model_provider: str | None = None
     model_name: str | None = None
     provider_profile: str | None = None
+    provider_connection_id: str | None = None
+    provider_connection: dict | None = None
     system_prompt: str | None = None
 
 
@@ -33,9 +36,27 @@ class LLMService:
 
     def generate(self, request: LLMRequest) -> LLMResponse:
         provider_name = request.model_provider or settings.runtime_default_provider
-        resolved_model = request.model_name or self._default_model(provider_name, request.provider_profile)
+        resolved_model = request.model_name or self._default_model(
+            provider_name,
+            request.provider_profile,
+            request.provider_connection,
+        )
 
         try:
+            if request.provider_connection:
+                connection = request.provider_connection
+                text = test_openai_compatible_chat(
+                    ProviderConnectionCredentials(
+                        provider_type=str(connection.get("provider_type") or "openai_compatible"),
+                        base_url=str(connection.get("base_url") or ""),
+                        api_key=str(connection.get("api_key") or ""),
+                    ),
+                    model_name=resolved_model,
+                    text=request.text,
+                    system_prompt=request.system_prompt,
+                )
+                return LLMResponse(text=text, provider="provider_connection", model_name=resolved_model)
+
             client = provider_factory.get_client(provider_name, provider_profile=request.provider_profile)
             text = client.generate(
                 ProviderGenerationRequest(
@@ -70,7 +91,14 @@ class LLMService:
             return False
         return isinstance(payload, dict) and bool(payload.get("use_llm"))
 
-    def _default_model(self, provider_name: str, provider_profile: str | None = None) -> str:
+    def _default_model(
+        self,
+        provider_name: str,
+        provider_profile: str | None = None,
+        provider_connection: dict | None = None,
+    ) -> str:
+        if provider_connection and provider_connection.get("default_model"):
+            return str(provider_connection["default_model"])
         if provider_profile:
             profile_name = re.sub(r"[^A-Za-z0-9]+", "_", provider_profile.strip()).strip("_").upper()
             env_value = os.getenv(f"{profile_name}_DEFAULT_MODEL")

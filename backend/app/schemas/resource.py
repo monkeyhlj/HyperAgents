@@ -12,6 +12,7 @@ class ResourceCreate(BaseModel):
     model_provider: str | None = Field(default=None, max_length=60)
     model_name: str | None = Field(default=None, max_length=120)
     provider_profile: str | None = Field(default=None, max_length=60)
+    provider_connection_id: str | None = Field(default=None, max_length=36)
     config: dict = Field(default_factory=dict)
 
 
@@ -23,6 +24,7 @@ class ResourceUpdate(BaseModel):
     model_provider: str | None = Field(default=None, max_length=60)
     model_name: str | None = Field(default=None, max_length=120)
     provider_profile: str | None = Field(default=None, max_length=60)
+    provider_connection_id: str | None = Field(default=None, max_length=36)
     config: dict | None = None
 
 
@@ -36,6 +38,7 @@ class Resource(TimeStampedModel):
     model_provider: str | None = None
     model_name: str | None = None
     provider_profile: str | None = None
+    provider_connection_id: str | None = None
     config: dict = Field(default_factory=dict)
     source: str = "custom"
     template_id: str | None = None
@@ -54,6 +57,7 @@ class ResourceTemplate(BaseModel):
     model_provider: str | None = None
     model_name: str | None = None
     provider_profile: str | None = None
+    provider_connection_id: str | None = None
     config: dict = Field(default_factory=dict)
 
 
@@ -136,6 +140,7 @@ class ResourcePreviewChatRequest(BaseModel):
     model_provider: str | None = Field(default=None, max_length=60)
     model_name: str | None = Field(default=None, max_length=120)
     provider_profile: str | None = Field(default=None, max_length=60)
+    provider_connection_id: str | None = Field(default=None, max_length=36)
     system_prompt: str | None = Field(default=None, max_length=8000)
     custom_code: str | None = None
     config: dict = Field(default_factory=dict)
@@ -143,3 +148,4 @@ class ResourcePreviewChatRequest(BaseModel):
 
 class ResourcePreviewChatResponse(BaseModel):
     text: str
+

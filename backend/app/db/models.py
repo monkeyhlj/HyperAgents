@@ -90,6 +90,32 @@ class ResourceModel(Base):
     )
 
 
+
+class ProviderConnectionModel(Base):
+    __tablename__ = "provider_connections"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    project_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    owner_id: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    provider_type: Mapped[str] = mapped_column(String(60), nullable=False, default="openai_compatible")
+    base_url: Mapped[str] = mapped_column(String(500), nullable=False)
+    api_key_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
+    api_key_masked: Mapped[str] = mapped_column(String(120), nullable=False, default="")
+    default_model: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    model_list_cache: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    last_test_status: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    last_test_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_test_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+    __table_args__ = (Index("ix_provider_connections_project_name", "project_id", "name", unique=True),)
+
 class ChatSessionModel(Base):
     __tablename__ = "chat_sessions"
 

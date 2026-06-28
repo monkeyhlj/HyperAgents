@@ -59,6 +59,7 @@ def create_resource(
         model_provider=payload.model_provider,
         model_name=payload.model_name,
         provider_profile=payload.provider_profile,
+        provider_connection_id=payload.provider_connection_id,
         config=payload.config,
     )
 
@@ -81,6 +82,13 @@ def preview_resource_chat(
     db: Session = Depends(get_db),
 ) -> ResourcePreviewChatResponse:
     store.assert_project_member(db, payload.project_id, user_id)
+    provider_connection = None
+    if payload.provider_connection_id:
+        provider_connection = store.get_provider_connection_runtime_config(
+            db,
+            connection_id=payload.provider_connection_id,
+            actor=user_id,
+        )
     if (payload.run_mode or "llm").strip().lower() == "code":
         tools = store.list_tool_resources_for_project(
             db,
@@ -106,13 +114,15 @@ def preview_resource_chat(
             mcps=mcps,
         )
         text = code_result.get("text", "") if isinstance(code_result, dict) else str(code_result)
-        if llm_service.code_requests_llm(text) and payload.model_provider and payload.model_name:
+        if llm_service.code_requests_llm(text) and (provider_connection or payload.model_provider or payload.model_name):
             text = llm_service.generate(
                 LLMRequest(
                     text=payload.text,
                     model_provider=payload.model_provider,
                     model_name=payload.model_name,
                     provider_profile=payload.provider_profile,
+                    provider_connection_id=payload.provider_connection_id,
+                    provider_connection=provider_connection,
                     system_prompt=payload.system_prompt,
                 )
             ).text
@@ -123,6 +133,8 @@ def preview_resource_chat(
                 model_provider=payload.model_provider,
                 model_name=payload.model_name,
                 provider_profile=payload.provider_profile,
+                    provider_connection_id=payload.provider_connection_id,
+                    provider_connection=provider_connection,
                 system_prompt=payload.system_prompt,
             )
         ).text

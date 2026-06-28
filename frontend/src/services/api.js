@@ -16,7 +16,12 @@ export async function request(path, options = {}) {
   });
 
   const text = await response.text();
-  const data = text ? JSON.parse(text) : {};
+  let data = {};
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = text ? { detail: text } : {};
+  }
 
   if (!response.ok) {
     const detail = data?.detail || `Request failed (${response.status})`;
@@ -117,6 +122,33 @@ export const api = {
   },
   probeMcp(payload) {
     return request("/api/v1/registry/mcp/probe", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+  },
+  listProviderConnections(projectId) {
+    return request(`/api/v1/provider-connections/projects/${projectId}`);
+  },
+  createProviderConnection(projectId, payload) {
+    return request(`/api/v1/provider-connections/projects/${projectId}`, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+  },
+  updateProviderConnection(connectionId, payload) {
+    return request(`/api/v1/provider-connections/${connectionId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload)
+    });
+  },
+  probeProviderModels(projectId, payload) {
+    return request(`/api/v1/provider-connections/projects/${projectId}/probe-models`, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+  },
+  testProviderConnectionDraft(projectId, payload) {
+    return request(`/api/v1/provider-connections/projects/${projectId}/test`, {
       method: "POST",
       body: JSON.stringify(payload)
     });

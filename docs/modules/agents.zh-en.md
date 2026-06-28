@@ -238,6 +238,32 @@ English:
 - `model_provider` 只表示运行时客户端类型，比如 `openai` 或 `localhost`。
 - `provider_profile` 决定读哪组凭据和默认模型。
 
+
+### URL + API Key Provider Connection / 通过 URL + Key 添加模型
+
+中文：
+除了 `provider_profile` 读取 `.env` 的平台级配置，Agents 页面现在也支持项目级 Provider Connection：
+
+1. 在 `Custom model settings` 中选择 `URL + API Key`。
+2. 填写 OpenAI-compatible `Base URL` 与 `API Key`。
+3. 点击 `Load Models`，后端会请求 `{base_url}/models` 并把模型列表返回给页面。
+4. 选择模型后点击 `Test`，通过最小 chat completion 验证连接。
+5. 点击 `Save Connection` 后，API Key 会加密保存到数据库，Agent 只保存 `provider_connection_id` 和所选 `model_name`。
+
+English:
+In addition to `.env`-backed `provider_profile`, the Agents page now supports project-level Provider Connections:
+
+1. Choose `URL + API Key` under `Custom model settings`.
+2. Fill an OpenAI-compatible `Base URL` and `API Key`.
+3. Click `Load Models`; the backend calls `{base_url}/models` and returns model IDs to the page.
+4. Select a model and click `Test` to verify with a minimal chat completion.
+5. Click `Save Connection`; the API key is stored encrypted in the database, while the Agent stores only `provider_connection_id` and `model_name`.
+
+说明 / Notes:
+
+- 旧的 `Env profile` 方式仍然保留，适合平台级预置模型。
+- 如果某个平台不支持 `/models`，可以手动输入 `model_name`，但仍建议用 `Test` 验证后再保存。
+- 生产环境请设置 `PROVIDER_CONNECTION_SECRET_KEY`，并优先使用 Secret Manager/KMS 管理密钥。
 ### Example D: provider_profile-driven config
 
 ```json

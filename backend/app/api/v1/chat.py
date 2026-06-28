@@ -115,6 +115,8 @@ def send_message(
     model_provider: str | None = None
     model_name: str | None = None
     provider_profile: str | None = None
+    provider_connection_id: str | None = None
+    provider_connection: dict | None = None
     system_prompt: str | None = None
     run_mode = "llm"
     custom_code = ""
@@ -127,6 +129,13 @@ def send_message(
         model_name = agent_resource.model_name
         agent_config = dict(agent_resource.config or {})
         provider_profile = agent_config.get("provider_profile")
+        provider_connection_id = agent_config.get("provider_connection_id")
+        if provider_connection_id:
+            provider_connection = store.get_provider_connection_runtime_config(
+                db,
+                connection_id=provider_connection_id,
+                actor=user_id,
+            )
         system_prompt = agent_config.get("system_prompt")
         run_mode = str(agent_config.get("run_mode") or "llm").strip().lower()
         custom_code = str(agent_config.get("custom_code") or "")
@@ -152,6 +161,7 @@ def send_message(
                 "agent_id": payload.agent_id,
                 "model_provider": model_provider,
                 "model_name": model_name,
+                "provider_connection_id": provider_connection_id,
                 "run_mode": run_mode,
             },
         )
@@ -187,13 +197,15 @@ def send_message(
             code_text, used_tools, used_mcps, use_llm = _decode_code_result(code_result)
 
             if use_llm:
-                if model_provider and model_name:
+                if provider_connection or model_provider or model_name:
                     llm_response = llm_service.generate(
                         LLMRequest(
                             text=payload.text,
                             model_provider=model_provider,
                             model_name=model_name,
                             provider_profile=provider_profile,
+                            provider_connection_id=provider_connection_id,
+                            provider_connection=provider_connection,
                             system_prompt=system_prompt,
                         )
                     )
@@ -238,6 +250,8 @@ def send_message(
                     model_provider=model_provider,
                     model_name=model_name,
                     provider_profile=provider_profile,
+                    provider_connection_id=provider_connection_id,
+                    provider_connection=provider_connection,
                     system_prompt=system_prompt,
                 )
             )

@@ -65,6 +65,10 @@ class Settings(BaseModel):
     embedding_retry_backoff_seconds: int = _as_int("EMBEDDING_RETRY_BACKOFF_SECONDS", 30)
     auth_secret_key: str = os.getenv("AUTH_SECRET_KEY", "hyperagents-dev-secret")
     auth_token_expire_minutes: int = _as_int("AUTH_TOKEN_EXPIRE_MINUTES", 60 * 24)
+    provider_connection_secret_key: str = os.getenv(
+        "PROVIDER_CONNECTION_SECRET_KEY",
+        os.getenv("AUTH_SECRET_KEY", "hyperagents-dev-secret"),
+    )
     worker_enabled: bool = _as_bool("WORKER_ENABLED", False)
     worker_broker_url: str = os.getenv("WORKER_BROKER_URL", "redis://localhost:6379/0")
     worker_backend_url: str = os.getenv("WORKER_BACKEND_URL", "redis://localhost:6379/1")

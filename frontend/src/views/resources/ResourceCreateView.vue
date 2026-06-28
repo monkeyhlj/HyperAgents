@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div>
     <Row :gutter="16">
       <Col v-if="isAgentKind" :xs="24" :lg="8">
@@ -44,7 +44,7 @@
             <Row :gutter="16">
               <Col :xs="24" :md="12">
                 <FormItem label="Project">
-                  <Select v-model="form.project_id" filterable placeholder="Select project" @on-change="refreshAssociationOptions">
+                  <Select v-model="form.project_id" filterable placeholder="Select project" @on-change="handleProjectChange">
                     <Option v-for="item in projects" :key="item.id" :value="item.id">{{ item.name }} ({{ item.id }})</Option>
                   </Select>
                 </FormItem>
@@ -110,24 +110,106 @@
                 </Col>
               </Row>
 
-              <Row v-else :gutter="16">
-                <Col :xs="24" :md="8">
-                  <FormItem label="Model Provider">
-                    <Input v-model="form.model_provider" />
-                  </FormItem>
-                </Col>
-                <Col :xs="24" :md="8">
-                  <FormItem label="Model Name">
-                    <Input v-model="form.model_name" />
-                  </FormItem>
-                </Col>
-                <Col :xs="24" :md="8">
-                  <FormItem label="Provider Profile">
-                    <Input v-model="form.provider_profile" />
-                  </FormItem>
-                </Col>
-              </Row>
+              <template v-else>
+                <FormItem label="Custom Model Source">
+                  <RadioGroup v-model="form.provider_config_mode">
+                    <Radio label="env">Env profile</Radio>
+                    <Radio label="connection">URL + API Key</Radio>
+                  </RadioGroup>
+                </FormItem>
 
+                <Row v-if="form.provider_config_mode === 'env'" :gutter="16">
+                  <Col :xs="24" :md="8">
+                    <FormItem label="Model Provider">
+                      <Input v-model="form.model_provider" placeholder="openai / localhost / compatible provider" />
+                    </FormItem>
+                  </Col>
+                  <Col :xs="24" :md="8">
+                    <FormItem label="Model Name">
+                      <Input v-model="form.model_name" placeholder="e.g. qwen-plus" />
+                    </FormItem>
+                  </Col>
+                  <Col :xs="24" :md="8">
+                    <FormItem label="Provider Profile">
+                      <Input v-model="form.provider_profile" placeholder="e.g. qwen -> QWEN_* in .env" />
+                    </FormItem>
+                  </Col>
+                </Row>
+
+                <template v-else>
+                  <Row :gutter="16">
+                    <Col :xs="24" :md="12">
+                      <FormItem label="Saved Provider Connection">
+                        <Select v-model="form.provider_connection_id" clearable filterable placeholder="Select saved connection" @on-change="applyProviderConnection">
+                          <Option v-for="item in providerConnections" :key="item.id" :value="item.id">
+                            {{ item.name }} ({{ item.default_model || '-' }} / {{ item.api_key_masked || 'no key' }})
+                          </Option>
+                        </Select>
+                      </FormItem>
+                    </Col>
+                    <Col :xs="24" :md="12">
+                      <FormItem label="Connection Name">
+                        <Input v-model="form.provider_connection_name" placeholder="Name for a new connection" />
+                      </FormItem>
+                    </Col>
+                  </Row>
+
+                  <Row :gutter="16">
+                    <Col :xs="24" :md="8">
+                      <FormItem label="Provider Type">
+                        <Select v-model="form.provider_type">
+                          <Option value="openai_compatible">openai_compatible</Option>
+                        </Select>
+                      </FormItem>
+                    </Col>
+                    <Col :xs="24" :md="16">
+                      <FormItem label="Base URL">
+                        <Input v-model="form.provider_base_url" placeholder="https://api.example.com/v1" />
+                      </FormItem>
+                    </Col>
+                  </Row>
+
+                  <Row :gutter="16">
+                    <Col :xs="24" :md="16">
+                      <FormItem label="API Key">
+                        <Input v-model="form.provider_api_key" type="password" password placeholder="Only sent to backend; saved encrypted when you save connection" />
+                      </FormItem>
+                    </Col>
+                    <Col :xs="24" :md="8">
+                      <FormItem label="Actions">
+                        <Space wrap>
+                          <Button :loading="providerLoadingModels" @click="loadProviderModels">Load Models</Button>
+                          <Button :loading="providerTesting" @click="testProviderDraft">Test</Button>
+                          <Button type="primary" :loading="providerSaving" @click="saveProviderConnectionDraft">Save Connection</Button>
+                        </Space>
+                      </FormItem>
+                    </Col>
+                  </Row>
+
+                  <Row :gutter="16">
+                    <Col :xs="24" :md="12">
+                      <FormItem label="Model">
+                        <Select v-if="form.provider_model_options.length > 0" v-model="form.model_name" filterable allow-create placeholder="Select model">
+                          <Option v-for="item in form.provider_model_options" :key="item" :value="item">{{ item }}</Option>
+                        </Select>
+                        <Input v-else v-model="form.model_name" placeholder="Enter model name manually if /models is unavailable" />
+                      </FormItem>
+                    </Col>
+                    <Col :xs="24" :md="12">
+                      <FormItem label="Model Provider">
+                        <Input v-model="form.model_provider" placeholder="openai" />
+                      </FormItem>
+                    </Col>
+                  </Row>
+
+                  <Alert v-if="providerProbeResult" :type="providerProbeResult.ok ? 'success' : 'warning'" show-icon style="margin-bottom: 12px">
+                    {{ providerProbeResult.ok ? `Loaded models: ${(providerProbeResult.models || []).length}` : (providerProbeResult.error || 'Load models failed; enter model manually') }}
+                  </Alert>
+                  <Alert v-if="providerTestResult" :type="providerTestResult.ok ? 'success' : 'error'" show-icon style="margin-bottom: 12px">
+                    {{ providerTestResult.ok ? `Test success: ${providerTestResult.output_preview || '-'}` : (providerTestResult.error || 'Provider test failed') }}
+                  </Alert>
+                </template>
+              </template>
               <Divider />
 
               <FormItem label="System Prompt">
@@ -450,14 +532,21 @@ const router = useRouter();
 const projects = ref([]);
 const templates = ref([]);
 const ownedResources = ref([]);
+const providerConnections = ref([]);
 const saving = ref(false);
 const testing = ref(false);
 const mcpProbing = ref(false);
+const providerLoadingModels = ref(false);
+const providerTesting = ref(false);
+const providerSaving = ref(false);
 const showMcpTemplate = ref(false);
 const testInput = ref("");
 const testMessages = ref([]);
 const loadedResource = ref(null);
 const mcpProbeResult = ref(null);
+const providerProbeResult = ref(null);
+const providerTestResult = ref(null);
+const providerConnectionLoadWarningShown = ref(false);
 
 const form = ref({
   project_id: "",
@@ -470,6 +559,13 @@ const form = ref({
   model_provider: "",
   model_name: "",
   provider_profile: "",
+  provider_config_mode: "env",
+  provider_connection_id: "",
+  provider_connection_name: "",
+  provider_type: "openai_compatible",
+  provider_base_url: "",
+  provider_api_key: "",
+  provider_model_options: [],
   system_prompt: "",
   custom_code: "def run(input_text, context):\n    text = input_text.strip()\n\n    if text == \"ping\":\n        return call_tool(\"testping\", {\"action\": \"ping\", \"text\": text})\n\n    if text == \"show config\":\n        return {\n            \"project_id\": context.get(\"project_id\"),\n            \"tool_ids\": context.get(\"config\", {}).get(\"tool_ids\", []),\n            \"tools\": list_tools(),\n        }\n\n    return {\"echo\": text}\n",
   tool_runtime: "python",
@@ -570,6 +666,12 @@ const toolOptions = computed(() => scopedOwned.value.filter((item) => item.kind 
 const skillOptions = computed(() => scopedOwned.value.filter((item) => item.kind === "skill"));
 const mcpOptions = computed(() => scopedOwned.value.filter((item) => item.kind === "mcp"));
 const kbOptions = computed(() => scopedOwned.value.filter((item) => item.kind === "knowledge_base"));
+const selectedProviderConnection = computed(() => {
+  if (!form.value.provider_connection_id) {
+    return null;
+  }
+  return providerConnections.value.find((item) => item.id === form.value.provider_connection_id) || null;
+});
 
 function defaultAdvancedConfigJsonByKind(targetKind) {
   if (targetKind === "mcp") {
@@ -611,6 +713,23 @@ async function loadOwnedResources() {
   ownedResources.value = await api.listOwnedResources();
 }
 
+async function loadProviderConnections(options = {}) {
+  const { notify = false } = options;
+  if (!isAgentKind.value || !form.value.project_id) {
+    providerConnections.value = [];
+    return;
+  }
+  try {
+    providerConnections.value = await api.listProviderConnections(form.value.project_id);
+  } catch (error) {
+    providerConnections.value = [];
+    if (notify && !providerConnectionLoadWarningShown.value) {
+      providerConnectionLoadWarningShown.value = true;
+      Message.warning(error.message || "Provider connections are unavailable");
+    }
+  }
+}
+
 async function loadResource() {
   if (!isEditMode.value || !resourceId.value) {
     return;
@@ -622,12 +741,16 @@ async function loadResource() {
   form.value.visibility = loadedResource.value.visibility || "project";
   form.value.description = loadedResource.value.description || "";
   form.value.run_mode = config.run_mode || "llm";
-  form.value.model_mode = loadedResource.value.model_provider || loadedResource.value.model_name ? "custom" : "default";
+  form.value.model_mode = loadedResource.value.model_provider || loadedResource.value.model_name || loadedResource.value.provider_connection_id ? "custom" : "default";
   form.value.template_id = "";
   if (isAgentKind.value) {
     form.value.model_provider = loadedResource.value.model_provider || "";
     form.value.model_name = loadedResource.value.model_name || "";
     form.value.provider_profile = loadedResource.value.provider_profile || "";
+    form.value.provider_connection_id = loadedResource.value.provider_connection_id || config.provider_connection_id || "";
+    form.value.provider_config_mode = form.value.provider_connection_id ? "connection" : "env";
+    const savedConnection = providerConnections.value.find((item) => item.id === form.value.provider_connection_id);
+    form.value.provider_model_options = savedConnection?.model_list_cache || [];
     form.value.system_prompt = config.system_prompt || "";
     form.value.custom_code = config.custom_code || "";
     form.value.tool_ids = config.tool_ids || [];
@@ -643,6 +766,7 @@ async function loadResource() {
     delete advancedConfig.skill_ids;
     delete advancedConfig.mcp_ids;
     delete advancedConfig.knowledge_base_ids;
+    delete advancedConfig.provider_connection_id;
     form.value.config_json = JSON.stringify(advancedConfig, null, 2);
     return;
   }
@@ -722,8 +846,19 @@ function applyTemplate() {
   form.value.model_provider = template.model_provider || "";
   form.value.model_name = template.model_name || "";
   form.value.provider_profile = template.provider_profile || "";
-    form.value.name = template.name;
-    form.value.description = template.description || "";
+  form.value.provider_connection_id = "";
+  form.value.provider_config_mode = "env";
+  form.value.provider_model_options = [];
+  form.value.name = template.name;
+  form.value.description = template.description || "";
+}
+async function handleProjectChange() {
+  refreshAssociationOptions();
+  form.value.provider_connection_id = "";
+  form.value.provider_model_options = [];
+  providerProbeResult.value = null;
+  providerTestResult.value = null;
+  await loadProviderConnections({ notify: true });
 }
 
 function refreshAssociationOptions() {
@@ -816,6 +951,7 @@ function buildRuntimeConfig() {
   return {
     run_mode: form.value.run_mode,
     system_prompt: form.value.system_prompt,
+    provider_connection_id: form.value.provider_config_mode === "connection" ? (form.value.provider_connection_id || null) : null,
     custom_code: form.value.custom_code,
     tool_ids: form.value.tool_ids,
     skill_ids: form.value.skill_ids,
@@ -823,6 +959,147 @@ function buildRuntimeConfig() {
     knowledge_base_ids: form.value.knowledge_base_ids,
     ...parseAdvancedConfig()
   };
+}
+
+function buildProviderDraftPayload() {
+  const baseUrl = (form.value.provider_base_url || "").trim();
+  if (!baseUrl) {
+    throw new Error("Provider Base URL is required");
+  }
+  return {
+    provider_type: form.value.provider_type || "openai_compatible",
+    base_url: baseUrl,
+    api_key: form.value.provider_api_key || ""
+  };
+}
+
+async function loadProviderModels() {
+  if (!isAgentKind.value) {
+    return;
+  }
+  if (!form.value.project_id) {
+    Message.warning("Please select project first");
+    return;
+  }
+  let payload;
+  try {
+    payload = buildProviderDraftPayload();
+  } catch (error) {
+    Message.error(error.message || "Provider config invalid");
+    return;
+  }
+  providerLoadingModels.value = true;
+  providerProbeResult.value = null;
+  try {
+    const result = await api.probeProviderModels(form.value.project_id, payload);
+    providerProbeResult.value = result;
+    if (result.ok) {
+      form.value.provider_model_options = result.models || [];
+      if (!form.value.model_name && form.value.provider_model_options.length > 0) {
+        form.value.model_name = form.value.provider_model_options[0];
+      }
+      Message.success(`Loaded ${form.value.provider_model_options.length} models`);
+    } else {
+      Message.error(result.error || "Load models failed; you can enter model name manually");
+    }
+  } catch (error) {
+    Message.error(error.message || "Load models failed");
+  } finally {
+    providerLoadingModels.value = false;
+  }
+}
+
+async function testProviderDraft() {
+  if (!form.value.project_id) {
+    Message.warning("Please select project first");
+    return;
+  }
+  if (!form.value.model_name) {
+    Message.warning("Please select or enter model name first");
+    return;
+  }
+  let payload;
+  try {
+    payload = {
+      ...buildProviderDraftPayload(),
+      model_name: form.value.model_name,
+      text: "ping"
+    };
+  } catch (error) {
+    Message.error(error.message || "Provider config invalid");
+    return;
+  }
+  providerTesting.value = true;
+  providerTestResult.value = null;
+  try {
+    const result = await api.testProviderConnectionDraft(form.value.project_id, payload);
+    providerTestResult.value = result;
+    if (result.ok) {
+      Message.success("Provider test success");
+    } else {
+      Message.error(result.error || "Provider test failed");
+    }
+  } catch (error) {
+    Message.error(error.message || "Provider test failed");
+  } finally {
+    providerTesting.value = false;
+  }
+}
+
+async function saveProviderConnectionDraft() {
+  if (!form.value.project_id) {
+    Message.warning("Please select project first");
+    return;
+  }
+  if (!form.value.provider_connection_name.trim()) {
+    Message.warning("Provider connection name is required");
+    return;
+  }
+  if (!form.value.model_name) {
+    Message.warning("Please select or enter model name first");
+    return;
+  }
+  let draft;
+  try {
+    draft = buildProviderDraftPayload();
+  } catch (error) {
+    Message.error(error.message || "Provider config invalid");
+    return;
+  }
+  providerSaving.value = true;
+  try {
+    const saved = await api.createProviderConnection(form.value.project_id, {
+      name: form.value.provider_connection_name.trim(),
+      provider_type: draft.provider_type,
+      base_url: draft.base_url,
+      api_key: draft.api_key,
+      default_model: form.value.model_name,
+      model_list_cache: form.value.provider_model_options || []
+    });
+    await loadProviderConnections({ notify: true });
+    form.value.provider_connection_id = saved.id;
+    form.value.provider_config_mode = "connection";
+    form.value.provider_api_key = "";
+    Message.success("Provider connection saved and selected");
+  } catch (error) {
+    Message.error(error.message || "Save provider connection failed");
+  } finally {
+    providerSaving.value = false;
+  }
+}
+
+function applyProviderConnection() {
+  const selected = selectedProviderConnection.value;
+  if (!selected) {
+    form.value.provider_model_options = [];
+    return;
+  }
+  form.value.provider_type = selected.provider_type || "openai_compatible";
+  form.value.provider_base_url = selected.base_url || "";
+  form.value.provider_model_options = selected.model_list_cache || [];
+  if (!form.value.model_name && selected.default_model) {
+    form.value.model_name = selected.default_model;
+  }
 }
 
 async function probeMcpDraft() {
@@ -897,7 +1174,8 @@ async function runDraftTest() {
       run_mode: form.value.run_mode,
       model_provider: form.value.model_provider || null,
       model_name: form.value.model_name || null,
-      provider_profile: form.value.provider_profile || null,
+      provider_profile: form.value.provider_config_mode === "env" ? (form.value.provider_profile || null) : null,
+      provider_connection_id: form.value.provider_config_mode === "connection" ? (form.value.provider_connection_id || null) : null,
       system_prompt: form.value.system_prompt || null,
       custom_code: form.value.custom_code,
       config: runtimeConfig
@@ -930,6 +1208,13 @@ async function submitForm() {
     }
   }
 
+  if (isAgentKind.value && form.value.model_mode === "custom" && form.value.provider_config_mode === "connection") {
+    if (!form.value.provider_connection_id) {
+      Message.warning("Please save or select a provider connection first");
+      return;
+    }
+  }
+
   saving.value = true;
   try {
     const config = buildRuntimeConfig();
@@ -940,7 +1225,8 @@ async function submitForm() {
       description: form.value.description,
       model_provider: isAgentKind.value ? (form.value.model_provider || null) : null,
       model_name: isAgentKind.value ? (form.value.model_name || null) : null,
-      provider_profile: isAgentKind.value ? (form.value.provider_profile || null) : null,
+      provider_profile: isAgentKind.value && form.value.provider_config_mode === "env" ? (form.value.provider_profile || null) : null,
+      provider_connection_id: isAgentKind.value && form.value.provider_config_mode === "connection" ? (form.value.provider_connection_id || null) : null,
       config
     };
     if (isEditMode.value && resourceId.value) {
@@ -962,7 +1248,9 @@ onMounted(async () => {
   try {
     applyCreateDefaultsByKind();
     await Promise.all([loadProjects(), loadTemplates(), loadOwnedResources()]);
+    await loadProviderConnections({ notify: true });
     await loadResource();
+    await loadProviderConnections({ notify: true });
   } catch (error) {
     Message.error(error.message || "Load create form data failed");
   }

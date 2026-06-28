@@ -240,6 +240,19 @@ Expected:
 - Probe succeeds
 - Tool list contains at least `ping` and `echo`
 
+## 6.0.1) Provider Connection 自测 / Provider Connection Validation
+
+中文：
+Agents 页面支持 `Custom model settings -> URL + API Key`：填写 OpenAI-compatible Base URL 与 API Key 后，可点击 `Load Models` 自动读取模型列表，再选择模型并 `Test`。测试通过后点击 `Save Connection`，系统会加密保存 API Key，并把 Agent 绑定到该 `provider_connection_id`。
+
+English:
+The Agents page supports `Custom model settings -> URL + API Key`: fill an OpenAI-compatible Base URL and API Key, click `Load Models`, choose a model, and run `Test`. After success, click `Save Connection`; the API key is encrypted in the database and the Agent stores the selected `provider_connection_id`.
+
+补充 / Add-on:
+
+- 原有 `Env profile` / `provider_profile` 方式继续保留，适合 `.env` 中预置的模型服务。
+- 若供应商不支持 `/models`，可手动输入 model name，但仍建议先执行 `Test`。
+- 生产环境请设置 `PROVIDER_CONNECTION_SECRET_KEY`，避免使用默认开发密钥。
 ## 6.1) Runtime Run 验证 / Runtime Run Validation
 
 中文：
