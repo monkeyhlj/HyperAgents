@@ -19,6 +19,10 @@ class LLMRequest:
     provider_connection_id: str | None = None
     provider_connection: dict | None = None
     system_prompt: str | None = None
+    # Full conversation history (overrides text/system_prompt when provided).
+    messages: list[dict] | None = None
+    # OpenAI-format tool definitions for function calling.
+    tools: list[dict] | None = None
 
 
 @dataclass
@@ -29,6 +33,8 @@ class LLMResponse:
     ok: bool = True
     used_fallback: bool = False
     error: str | None = None
+    # Populated when the model requests tool calls instead of (or alongside) text.
+    tool_calls: list[dict] | None = None
 
 
 class LLMService:
@@ -45,27 +51,58 @@ class LLMService:
         try:
             if request.provider_connection:
                 connection = request.provider_connection
-                text = test_openai_compatible_chat(
-                    ProviderConnectionCredentials(
-                        provider_type=str(connection.get("provider_type") or "openai_compatible"),
-                        base_url=str(connection.get("base_url") or ""),
-                        api_key=str(connection.get("api_key") or ""),
-                    ),
-                    model_name=resolved_model,
-                    text=request.text,
-                    system_prompt=request.system_prompt,
+                from openai import OpenAI as _OpenAI
+                from app.runtime.provider_connections import normalize_base_url
+                _oa_client = _OpenAI(
+                    api_key=str(connection.get("api_key") or "not-needed"),
+                    base_url=normalize_base_url(str(connection.get("base_url") or "")),
+                    timeout=float(settings.model_request_timeout_seconds),
                 )
-                return LLMResponse(text=text, provider="provider_connection", model_name=resolved_model)
+                _messages: list[dict] = request.messages or []
+                if not _messages:
+                    if request.system_prompt:
+                        _messages = [{"role": "system", "content": request.system_prompt}]
+                    _messages = [*_messages, {"role": "user", "content": request.text}]
+                _kwargs: dict = {"model": resolved_model, "messages": _messages, "temperature": 0.2}
+                if request.tools:
+                    _kwargs["tools"] = request.tools
+                    _kwargs["tool_choice"] = "auto"
+                _result = _oa_client.chat.completions.create(**_kwargs)
+                _choice = _result.choices[0]
+                _msg = _choice.message
+                _tool_calls: list[dict] | None = None
+                if _msg.tool_calls:
+                    import json as _json
+                    _tool_calls = []
+                    for _tc in _msg.tool_calls:
+                        try:
+                            _args = _json.loads(_tc.function.arguments)
+                        except Exception:
+                            _args = {}
+                        _tool_calls.append({"id": _tc.id, "name": _tc.function.name, "arguments": _args})
+                return LLMResponse(
+                    text=_msg.content or "",
+                    provider="provider_connection",
+                    model_name=resolved_model,
+                    tool_calls=_tool_calls,
+                )
 
             client = provider_factory.get_client(provider_name, provider_profile=request.provider_profile)
-            text = client.generate(
+            gen_response = client.generate(
                 ProviderGenerationRequest(
                     text=request.text,
                     model_name=resolved_model,
                     system_prompt=request.system_prompt,
+                    messages=request.messages,
+                    tools=request.tools,
                 )
             )
-            return LLMResponse(text=text, provider=provider_name, model_name=resolved_model)
+            return LLMResponse(
+                text=gen_response.text,
+                provider=provider_name,
+                model_name=resolved_model,
+                tool_calls=gen_response.tool_calls,
+            )
         except Exception as exc:
             # Keep backward-compatible fallback text behavior for callers.
             fallback = f"[runtime-fallback:{provider_name}] {request.text} | error={exc}"
