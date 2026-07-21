@@ -68,6 +68,12 @@ class ChatSessionCreate(BaseModel):
 class ChatMessageRequest(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
     agent_id: str | None = None
+    # ReAct Agent configuration
+    engine_type: str | None = None  # "legacy" or "react"
+    provider_profile: str | None = None
+    temperature: float | None = None
+    max_iterations: int | None = None
+    mcp_ids: list[str] | None = None
 
 
 class ChatMessageResponse(BaseModel):

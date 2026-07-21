@@ -47,6 +47,40 @@ def _env(name: str, default: str | None = None) -> str | None:
     return value
 
 
+def _supports_function_calling(model_name: str) -> bool:
+    """Check if a model supports OpenAI-style function calling."""
+    model = (model_name or "").lower().strip()
+    
+    # Models that support function calling
+    supported_patterns = [
+        "gpt-4",  # All GPT-4 variants (gpt-4o, gpt-4-turbo, etc.)
+        "gpt-3.5-turbo-1106",  # Only 1106+ versions
+        "claude-3",  # Anthropic Claude 3+
+    ]
+    
+    # Models that explicitly don't support it
+    unsupported_patterns = [
+        "glm-",  # Zhipu GLM models (glm-4 might support, but glm-3.5/glm-5.1 don't)
+        "qwen",  # Alibaba Qwen
+        "ernie",  # Baidu ERNIE
+        "text-davinci-002",
+        "text-davinci-003",
+    ]
+    
+    # Check unsupported first (more specific)
+    for pattern in unsupported_patterns:
+        if pattern in model:
+            return False
+    
+    # Check supported patterns
+    for pattern in supported_patterns:
+        if pattern in model:
+            return True
+    
+    # Default: assume doesn't support (safe fallback)
+    return False
+
+
 class OpenAIProviderClient(ProviderClient):
     def __init__(self, profile_name: str = "openai") -> None:
         self._profile_name = profile_name

@@ -1,4 +1,5 @@
 import json
+import logging
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
@@ -12,6 +13,8 @@ from app.runtime.mcp_client import (
     get_mcp_client,
     mcp_tool_to_openai,
 )
+from app.runtime.providers import _supports_function_calling
+from app.runtime.agent_engine import LangChainLLMWrapper, ReActAgent, ToolManager
 from app.schemas.resource import (
     CodeExecutionAuditRecord,
     ChatMessageRecord,
@@ -24,7 +27,7 @@ from app.schemas.resource import (
 )
 from app.services.postgres_store import store
 
-
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -33,6 +36,57 @@ def _decode_code_result(code_result: dict | str) -> tuple[str, list[str], list[d
     used_tools = list(code_result.get("used_tools", [])) if isinstance(code_result, dict) else []
     used_mcps = list(code_result.get("used_mcps", [])) if isinstance(code_result, dict) else []
     return str(text), used_tools, used_mcps, llm_service.code_requests_llm(str(text))
+
+
+@router.get("/agents/{agent_id}/debug", tags=["debug"])
+def debug_agent_config(
+    agent_id: str,
+    project_id: str = Query(...),
+    user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Debug endpoint: return agent config and associated resources."""
+    agent = store.get_agent_resource_for_project(db, project_id, agent_id)
+    config = dict(agent.config or {})
+    mcp_ids = list(config.get("mcp_ids") or [])
+    
+    # Ensure mcp_ids is a list of strings
+    mcp_ids = [str(mid) for mid in mcp_ids if mid]
+    
+    mcps = store.list_mcp_resources_for_project(db, project_id=project_id, mcp_ids=mcp_ids, actor=user_id)
+    
+    tools_preview: list[dict] = []
+    for mcp_spec in mcps:
+        mcp_name = str(mcp_spec.get("name") or "")
+        try:
+            client = get_mcp_client(mcp_spec)
+            tools = client.list_tools()
+            tools_preview.append({
+                "mcp_name": mcp_name,
+                "mcp_id": mcp_spec.get("id"),
+                "endpoint_url": mcp_spec.get("endpoint_url"),
+                "transport": mcp_spec.get("transport"),
+                "tool_count": len(tools),
+                "tools": [{"name": t.get("name"), "description": t.get("description", "")} for t in tools[:3]],  # first 3
+            })
+        except Exception as exc:
+            tools_preview.append({
+                "mcp_name": mcp_name,
+                "mcp_id": mcp_spec.get("id"),
+                "error": str(exc),
+            })
+    
+    return {
+        "agent_id": agent_id,
+        "agent_name": agent.name,
+        "model_provider": agent.model_provider,
+        "model_name": agent.model_name,
+        "run_mode": config.get("run_mode", "llm"),
+        "system_prompt": config.get("system_prompt", ""),
+        "mcp_ids_in_config": mcp_ids,
+        "mcps_count": len(mcps),
+        "mcps": tools_preview,
+    }
 
 
 @router.get("/code-execution-audits", response_model=list[CodeExecutionAuditRecord])
@@ -96,7 +150,7 @@ def list_runtime_run_events(
 
 
 @router.post("/sessions/{session_id}/messages", response_model=ChatMessageResponse)
-def send_message(
+async def send_message(
     session_id: str,
     payload: ChatMessageRequest,
     user_id: str = Depends(get_current_user_id),
@@ -135,6 +189,17 @@ def send_message(
         model_provider = agent_resource.model_provider
         model_name = agent_resource.model_name
         agent_config = dict(agent_resource.config or {})
+        # Override agent config with request parameters if provided
+        if payload.engine_type:
+            agent_config["engine_type"] = payload.engine_type
+        if payload.provider_profile:
+            agent_config["provider_profile"] = payload.provider_profile
+        if payload.temperature is not None:
+            agent_config["temperature"] = payload.temperature
+        if payload.max_iterations is not None:
+            agent_config["max_iterations"] = payload.max_iterations
+        if payload.mcp_ids is not None:
+            agent_config["mcp_ids"] = payload.mcp_ids
         provider_profile = agent_config.get("provider_profile")
         provider_connection_id = agent_config.get("provider_connection_id")
         if provider_connection_id:
@@ -152,12 +217,24 @@ def send_message(
             tool_ids=list(agent_config.get("tool_ids") or []),
             actor=user_id,
         )
+        # Ensure mcp_ids is a list of strings; convert from string if needed
+        raw_mcp_ids = agent_config.get("mcp_ids") or []
+        mcp_ids_list: list[str] = []
+        if isinstance(raw_mcp_ids, str):
+            # Handle case where mcp_ids was stored as a single string
+            mcp_ids_list = [raw_mcp_ids] if raw_mcp_ids else []
+        else:
+            mcp_ids_list = [str(mid) for mid in raw_mcp_ids if mid]
+        
+        logger.info(f"[send_message] Agent {payload.agent_id} has mcp_ids: {mcp_ids_list}")
+        
         mcps = store.list_mcp_resources_for_project(
             db,
             project_id=session.project_id,
-            mcp_ids=list(agent_config.get("mcp_ids") or []),
+            mcp_ids=mcp_ids_list,
             actor=user_id,
         )
+        logger.info(f"[send_message] Loaded {len(mcps)} MCPs: {[m.get('name') for m in mcps]}")
         store.append_runtime_run_event(
             db=db,
             run_id=run.id,
@@ -172,6 +249,18 @@ def send_message(
                 "run_mode": run_mode,
             },
         )
+    else:
+        # No agent_id provided, apply request parameters to agent_config
+        if payload.engine_type:
+            agent_config["engine_type"] = payload.engine_type
+        if payload.provider_profile:
+            agent_config["provider_profile"] = payload.provider_profile
+        if payload.temperature is not None:
+            agent_config["temperature"] = payload.temperature
+        if payload.max_iterations is not None:
+            agent_config["max_iterations"] = payload.max_iterations
+        if payload.mcp_ids is not None:
+            agent_config["mcp_ids"] = payload.mcp_ids
 
     try:
         store.append_chat_message(db, session_id, role="user", text=payload.text)
@@ -252,124 +341,249 @@ def send_message(
             )
         else:
             # ------------------------------------------------------------------
-            # Fetch tool definitions from associated MCPs (best-effort).
+            # NEW: ReAct Engine (Phase 1 - supports any OpenAI-compatible model)
             # ------------------------------------------------------------------
-            openai_tools: list[dict] = []
-            # Maps OpenAI tool name → (mcp_spec, original_tool_name)
-            tool_to_mcp: dict[str, tuple[dict, str]] = {}
-
-            for mcp_spec in mcps:
-                mcp_name = str(mcp_spec.get("name") or "")
+            engine_type = str(agent_config.get("engine_type", "legacy")).strip().lower()
+            
+            if engine_type == "react":
+                logger.info(f"[send_message] Using ReAct Agent Engine (agent={payload.agent_id})")
                 try:
-                    mcp_c = get_mcp_client(mcp_spec)
-                    for tool in mcp_c.list_tools():
-                        openai_def = mcp_tool_to_openai(mcp_name, tool)
-                        fn_name = openai_def["function"]["name"]
-                        openai_tools.append(openai_def)
-                        tool_to_mcp[fn_name] = (mcp_spec, str(tool.get("name") or ""))
-                except Exception:
-                    pass  # skip unreachable MCPs
-
-            # ------------------------------------------------------------------
-            # Build initial conversation messages.
-            # ------------------------------------------------------------------
-            conv_messages: list[dict] = []
-            if system_prompt:
-                conv_messages.append({"role": "system", "content": system_prompt})
-            conv_messages.append({"role": "user", "content": payload.text})
-
-            # ------------------------------------------------------------------
-            # Agentic loop: call LLM → execute tool calls → repeat.
-            # ------------------------------------------------------------------
-            _MAX_TOOL_ITERATIONS = 10
-            answer = ""
-            llm_response = None
-
-            for _iter in range(_MAX_TOOL_ITERATIONS):
-                llm_response = llm_service.generate(
-                    LLMRequest(
-                        text=payload.text,
-                        model_provider=model_provider,
-                        model_name=model_name,
+                    # Initialize ReAct Agent
+                    llm_wrapper = LangChainLLMWrapper(
+                        llm_service=llm_service,
+                        model_name=model_name or "gpt-4o-mini",
+                        temperature=float(agent_config.get("temperature", 0.2)),
+                        provider=model_provider or "openai",
                         provider_profile=provider_profile,
-                        provider_connection_id=provider_connection_id,
-                        provider_connection=provider_connection,
-                        system_prompt=system_prompt,
-                        messages=conv_messages,
-                        tools=openai_tools if openai_tools else None,
                     )
-                )
-
-                if llm_response.tool_calls:
-                    # Append assistant message with tool_calls to conversation.
-                    conv_messages.append({
-                        "role": "assistant",
-                        "content": llm_response.text or None,
-                        "tool_calls": [
-                            {
-                                "id": tc["id"],
-                                "type": "function",
-                                "function": {
-                                    "name": tc["name"],
-                                    "arguments": json.dumps(tc["arguments"]),
-                                },
-                            }
-                            for tc in llm_response.tool_calls
-                        ],
-                    })
-
-                    # Execute each requested tool call.
-                    for tc in llm_response.tool_calls:
-                        fn_name = tc["name"]
-                        fn_args = tc["arguments"]
-                        if fn_name in tool_to_mcp:
-                            mcp_spec, orig_tool = tool_to_mcp[fn_name]
-                            mcp_res_name = str(mcp_spec.get("name") or "")
-                            try:
-                                raw = get_mcp_client(mcp_spec).call_tool(orig_tool, fn_args)
-                                result_text = extract_tool_result_text(raw)
-                                used_mcps.append({"mcp": mcp_res_name, "tool": orig_tool})
-                                store.append_runtime_run_event(
-                                    db=db, run_id=run.id, stage="mcp", status="succeeded",
-                                    message=f"MCP tool called: {mcp_res_name}/{orig_tool}",
-                                    payload={"mcp": mcp_res_name, "tool": orig_tool},
-                                )
-                            except Exception as exc:
-                                result_text = f"[error calling {fn_name}: {exc}]"
-                                store.append_runtime_run_event(
-                                    db=db, run_id=run.id, stage="mcp", status="failed",
-                                    message=f"MCP tool failed: {fn_name}",
-                                    payload={"error": str(exc)},
-                                )
-                        else:
-                            result_text = f"[unknown tool: {fn_name}]"
-
-                        conv_messages.append({
-                            "role": "tool",
-                            "tool_call_id": tc["id"],
-                            "content": result_text,
-                        })
-                else:
-                    answer = llm_response.text
-                    break
+                    tool_manager = ToolManager()
+                    agent = ReActAgent(
+                        llm=llm_wrapper,
+                        tool_manager=tool_manager,
+                        max_iterations=int(agent_config.get("max_iterations", 10)),
+                    )
+                    
+                    # Prepare context for agent
+                    agent_context = {
+                        "mcps": {m.get("id"): m for m in mcps},
+                        "tools": {t.get("id"): t for t in tools},
+                        "skills": {},  # TODO: Phase 2
+                        "knowledge_bases": {},  # TODO: Phase 2
+                    }
+                    
+                    # Run agent
+                    answer, agent_events = await agent.run(
+                        user_input=payload.text,
+                        agent_config=agent_config,
+                        context=agent_context,
+                        system_prompt=system_prompt,
+                    )
+                    
+                    # Record agent events in RuntimeRunEvent
+                    for event in agent_events:
+                        store.append_runtime_run_event(
+                            db=db,
+                            run_id=run.id,
+                            stage=f"agentic_{event['stage']}",
+                            status="succeeded" if event.get("error") is None else "failed",
+                            message=f"Agent step: {event['stage']} (iteration {event.get('iteration', 0)})",
+                            payload=event,
+                        )
+                    
+                    logger.info(f"[send_message] ReAct Agent completed with {len(agent_events)} events")
+                    
+                except Exception as e:
+                    logger.error(f"[send_message] ReAct Agent failed: {str(e)}", exc_info=True)
+                    answer = f"[ReAct Agent Error] {str(e)}"
+                    store.append_runtime_run_event(
+                        db=db,
+                        run_id=run.id,
+                        stage="agent",
+                        status="failed",
+                        message="ReAct Agent execution failed",
+                        payload={"error": str(e)},
+                    )
             else:
-                answer = (llm_response.text if llm_response else "") or "[max tool iterations reached]"
+                # ------------------------------------------------------------------
+                # LEGACY: Original agentic loop (function calling based)
+                # ------------------------------------------------------------------
+                # Check if model supports function calling.
+                # ------------------------------------------------------------------
+                supports_fc = _supports_function_calling(model_name or "")
+                logger.info(f"[send_message] Model {model_name} supports function calling: {supports_fc}")
+                
+                if not supports_fc and mcps:
+                    # Model doesn't support function calling. Fallback to direct LLM call.
+                    logger.info(f"[send_message] Model doesn't support function calling. Calling LLM without tools.")
+                    llm_response = llm_service.generate(
+                        LLMRequest(
+                            text=payload.text,
+                            model_provider=model_provider,
+                            model_name=model_name,
+                            provider_profile=provider_profile,
+                            provider_connection_id=provider_connection_id,
+                            provider_connection=provider_connection,
+                            system_prompt=system_prompt,
+                            messages=None,  # Use simple single-turn
+                            tools=None,  # Don't send tools
+                        )
+                    )
+                    answer = llm_response.text
+                    store.append_runtime_run_event(
+                        db=db,
+                        run_id=run.id,
+                        stage="llm",
+                        status="succeeded" if llm_response.ok else "failed",
+                        message="LLM generation completed (model doesn't support function calling)",
+                        payload={
+                            "provider": llm_response.provider,
+                            "model_name": llm_response.model_name,
+                            "note": f"MCPs available but not used: {[m.get('name') for m in mcps]}",
+                        },
+                    )
+                else:
+                    # ------------------------------------------------------------------
+                    # Fetch tool definitions from associated MCPs (best-effort).
+                    # ------------------------------------------------------------------
+                    openai_tools: list[dict] = []
+                    # Maps OpenAI tool name → (mcp_spec, original_tool_name)
+                    tool_to_mcp: dict[str, tuple[dict, str]] = {}
+                    mcp_names_for_prompt: list[str] = []
 
-            store.append_runtime_run_event(
-                db=db,
-                run_id=run.id,
-                stage="llm",
-                status="succeeded" if (llm_response and llm_response.ok) else "failed",
-                message="LLM generation completed",
-                payload={
-                    "provider": llm_response.provider if llm_response else "",
-                    "model_name": llm_response.model_name if llm_response else "",
-                    "used_fallback": llm_response.used_fallback if llm_response else False,
-                    "error": llm_response.error if llm_response else None,
-                    "tool_iterations": _iter + 1,
-                    "mcp_calls": len(used_mcps),
-                },
-            )
+                    for mcp_spec in mcps:
+                        mcp_name = str(mcp_spec.get("name") or "")
+                        try:
+                            mcp_c = get_mcp_client(mcp_spec)
+                            tools_list = mcp_c.list_tools()
+                            logger.info(f"[send_message] MCP {mcp_name} has {len(tools_list)} tools")
+                            if tools_list:
+                                mcp_names_for_prompt.append(mcp_name)
+                            for tool in tools_list:
+                                openai_def = mcp_tool_to_openai(mcp_name, tool)
+                                fn_name = openai_def["function"]["name"]
+                                openai_tools.append(openai_def)
+                                tool_to_mcp[fn_name] = (mcp_spec, str(tool.get("name") or ""))
+                        except Exception as exc:
+                            # Log but don't fail; other MCPs may still work
+                            logger.warning(f"[send_message] Failed to load MCP {mcp_name}: {exc}")
+
+                    # ------------------------------------------------------------------
+                    # Augment system prompt with available tools info.
+                    # ------------------------------------------------------------------
+                    final_system_prompt = system_prompt or "You are a helpful assistant."
+                    if mcp_names_for_prompt:
+                        tools_list_text = ", ".join(mcp_names_for_prompt)
+                        augmented_prompt = f"{final_system_prompt}\n\nYou have access to the following MCP tools/services: {tools_list_text}. When appropriate, use these tools to answer user questions and get real-time information."
+                    else:
+                        augmented_prompt = final_system_prompt
+
+                    # ------------------------------------------------------------------
+                    # Build initial conversation messages.
+                    # ------------------------------------------------------------------
+                    conv_messages: list[dict] = []
+                    conv_messages.append({"role": "system", "content": augmented_prompt})
+                    conv_messages.append({"role": "user", "content": payload.text})
+
+                    # ------------------------------------------------------------------
+                    # Agentic loop: call LLM → execute tool calls → repeat.
+                    # ------------------------------------------------------------------
+                    _MAX_TOOL_ITERATIONS = 10
+                    answer = ""
+                    llm_response = None
+                    
+                    logger.info(f"[send_message] Starting agentic loop with {len(openai_tools)} tools, prompt includes: {mcp_names_for_prompt}")
+
+                    for _iter in range(_MAX_TOOL_ITERATIONS):
+                        logger.debug(f"[send_message] Agentic iteration {_iter + 1}")
+                        llm_response = llm_service.generate(
+                            LLMRequest(
+                                text=payload.text,
+                                model_provider=model_provider,
+                                model_name=model_name,
+                                provider_profile=provider_profile,
+                                provider_connection_id=provider_connection_id,
+                                provider_connection=provider_connection,
+                                system_prompt=system_prompt,
+                                messages=conv_messages,
+                                tools=openai_tools if openai_tools else None,
+                            )
+                        )
+                        
+                        if llm_response.tool_calls:
+                            logger.info(f"[send_message] LLM requested {len(llm_response.tool_calls)} tool calls")
+                            conv_messages.append({
+                                "role": "assistant",
+                                "content": llm_response.text or None,
+                                "tool_calls": [
+                                    {
+                                        "id": tc["id"],
+                                        "type": "function",
+                                        "function": {
+                                            "name": tc["name"],
+                                            "arguments": json.dumps(tc["arguments"]),
+                                    },
+                                }
+                                for tc in llm_response.tool_calls
+                            ],
+                            })
+
+                            # Execute each requested tool call.
+                            for tc in llm_response.tool_calls:
+                                fn_name = tc["name"]
+                                fn_args = tc["arguments"]
+                                logger.debug(f"[send_message] Executing tool: {fn_name}")
+                                if fn_name in tool_to_mcp:
+                                    mcp_spec, orig_tool = tool_to_mcp[fn_name]
+                                    mcp_res_name = str(mcp_spec.get("name") or "")
+                                    try:
+                                        raw = get_mcp_client(mcp_spec).call_tool(orig_tool, fn_args)
+                                        result_text = extract_tool_result_text(raw)
+                                        used_mcps.append({"mcp": mcp_res_name, "tool": orig_tool})
+                                        logger.info(f"[send_message] Tool call succeeded: {mcp_res_name}/{orig_tool}")
+                                        store.append_runtime_run_event(
+                                            db=db, run_id=run.id, stage="mcp", status="succeeded",
+                                            message=f"MCP tool called: {mcp_res_name}/{orig_tool}",
+                                            payload={"mcp": mcp_res_name, "tool": orig_tool},
+                                        )
+                                    except Exception as exc:
+                                        result_text = f"[error calling {fn_name}: {exc}]"
+                                        logger.error(f"[send_message] Tool call failed: {fn_name}, error: {exc}")
+                                        store.append_runtime_run_event(
+                                            db=db, run_id=run.id, stage="mcp", status="failed",
+                                            message=f"MCP tool failed: {fn_name}",
+                                            payload={"error": str(exc)},
+                                        )
+                                else:
+                                    result_text = f"[unknown tool: {fn_name}]"
+                                    logger.warning(f"[send_message] Unknown tool: {fn_name}")
+
+                                conv_messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": tc["id"],
+                                    "content": result_text,
+                                })
+                        else:
+                            answer = llm_response.text
+                            logger.info(f"[send_message] LLM returned final answer (iteration {_iter + 1})")
+                            break
+                    else:
+                        answer = (llm_response.text if llm_response else "") or "[max tool iterations reached]"
+
+                    store.append_runtime_run_event(
+                        db=db,
+                        run_id=run.id,
+                        stage="llm",
+                        status="succeeded" if (llm_response and llm_response.ok) else "failed",
+                        message="LLM generation completed",
+                        payload={
+                            "provider": llm_response.provider if llm_response else "",
+                            "model_name": llm_response.model_name if llm_response else "",
+                            "used_fallback": llm_response.used_fallback if llm_response else False,
+                            "error": llm_response.error if llm_response else None,
+                            "tool_iterations": _iter + 1,
+                        "mcp_calls": len(used_mcps),
+                    },
+                )
         store.append_chat_message(db, session_id, role="assistant", text=answer)
         store.finish_runtime_run(
             db=db,
