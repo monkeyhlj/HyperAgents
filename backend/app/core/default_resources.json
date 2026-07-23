@@ -31,9 +31,22 @@
     "name": "Zhipu Assistant",
     "description": "Zhipu-compatible assistant template. Requires ZHIPU_API_KEY, ZHIPU_BASE_URL, and ZHIPU_DEFAULT_MODEL from .env.",
     "visibility": "project",
-      "model_provider": "zhipu",
+    "model_provider": "zhipu",
     "model_name": "glm-5.1",
     "provider_profile": "zhipu",
+    "config": {
+      "system_prompt": "You are a helpful AI assistant."
+    }
+  },
+  {
+    "template_id": "agent-nvidia-default",
+    "kind": "agent",
+    "name": "NVIDIA Assistant",
+    "description": "NVIDIA-compatible assistant template. Uses NVIDIA_API_KEY, NVIDIA_BASE_URL, and NVIDIA_DEFAULT_MODEL from .env.",
+    "visibility": "project",
+    "model_provider": "nvidia",
+    "model_name": "z-ai/glm-5.2",
+    "provider_profile": "nvidia",
     "config": {
       "system_prompt": "You are a helpful AI assistant."
     }

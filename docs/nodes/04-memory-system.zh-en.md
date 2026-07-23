@@ -4,21 +4,13 @@
 
 ## Memory 是平台级节点 / Memory as a platform-level node
 
-中文：
 Memory 不是聊天历史的别名，而是独立服务。当前支持 scope/type：
-- conversation
-- project
-- agent
-- execution
-- global
 
-English:
-Memory is not just chat history. It is an independent service. Current scope/type values:
-- conversation
-- project
-- agent
-- execution
-- global
+- `conversation`
+- `project`
+- `agent`
+- `execution`
+- `global`
 
 ## Memory APIs
 
@@ -29,35 +21,26 @@ Memory is not just chat history. It is an independent service. Current scope/typ
 
 ## 自动向量化 / Automatic Embedding
 
-中文：
-`POST /api/v1/memory` 默认 `auto_embedding=true`，服务端自动调用 Embedding Provider。
+`POST /api/v1/memory` 默认 `auto_embedding=true`，服务端自动调用 Embedding Provider。若只想写结构化 memory 而不生成向量，可传 `auto_embedding=false`。
 
-English:
-`POST /api/v1/memory` uses `auto_embedding=true` by default, so vectors are generated server-side.
+## 向量维度 / Embedding Dimensions
 
-## 降级策略 / Fallback Strategy
+- 默认 `MEMORY_EMBEDDING_DIMENSIONS=1536`。
+- `memory_records.embedding` 使用 pgvector，并按配置维度建模。
+- `semantic-search.query_embedding` 的维度必须和 `MEMORY_EMBEDDING_DIMENSIONS` 一致，否则返回明确错误。
+- 如果更改维度，需要同步数据库迁移和历史数据策略。
 
-中文：
-- embedding 失败时，memory 记录仍会写入
-- `embedding_status=failed`
-- 记录 `embedding_error`
-- 自动入重试队列，可异步重试
+## 降级与重试 / Fallback and Retry
 
-English:
-- If embedding generation fails, memory record is still saved
-- `embedding_status=failed`
-- `embedding_error` is stored
-- Retry job is queued and can be retried asynchronously
+- embedding 失败时，memory 记录仍会写入。
+- `embedding_status=failed`。
+- 记录 `embedding_error`。
+- 可通过 `retry-embeddings` 重试。
+- `enqueue=true` 且 Worker 可用时进入 Celery；否则回退到 API 进程执行。
 
 ## 混合检索 / Hybrid Retrieval
 
-中文：
 语义检索支持 `similarity_weight`：
-
-`hybrid_score = similarity_weight * similarity_score + (1 - similarity_weight) * importance_score`
-
-English:
-Semantic retrieval supports `similarity_weight`:
 
 `hybrid_score = similarity_weight * similarity_score + (1 - similarity_weight) * importance_score`
 
@@ -67,4 +50,5 @@ Semantic retrieval supports `similarity_weight`:
 - `backend/app/services/memory_store.py`
 - `backend/app/runtime/embeddings.py`
 - `backend/app/schemas/memory.py`
+- `backend/app/workers/tasks.py`
 - `backend/app/db/models.py`

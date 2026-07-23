@@ -422,7 +422,34 @@ role_name = config.get("role_name", "Code Agent")
 
 在 Workbench 的 Conversation 区域，Assistant 的回复上方会显示一个**橙色标签**，表示调用的工具名。如果没有标签，说明这次回复没有调用工具（可能是直接返回结果或使用了 LLM 回退）。
 
-## 10. File Path / 文档路径
+## 10. ReAct Engine / ReAct 引擎
+
+中文：
+除了 `llm` 和 `code` 模式，Chat 发送消息时还可以通过 `engine_type=react` 走 ReAct thought/action/observation 循环。这个路径适合不支持 function calling、但能稳定按文本格式输出 Action/Input 的 OpenAI-compatible 模型。
+
+English:
+In addition to `llm` and `code` modes, chat messages can use `engine_type=react` to run a ReAct thought/action/observation loop. This is useful for OpenAI-compatible models that do not support function calling but can follow text-based Action/Input instructions.
+
+当前状态 / Current status:
+
+- ReAct events are recorded into runtime events payloads.
+- MCP tools can be loaded and called by the ReAct ToolManager.
+- Built-in tools include `calculator`, `web_search`, and `current_time`; `web_search` is currently a placeholder.
+- Skill and Knowledge Base tools are represented in ToolManager, but their full runtime semantics are still evolving.
+- For deterministic custom business logic, `run_mode=code` remains the recommended path.
+
+请求示例 / Request example:
+
+```json
+{
+  "text": "Use tools if needed and answer briefly.",
+  "agent_id": "<agent-id>",
+  "engine_type": "react",
+  "max_iterations": 5,
+  "mcp_ids": ["<mcp-id>"]
+}
+```
+## 11. File Path / 文档路径
 
 - Workspace path: `docs/modules/agents.zh-en.md`
 - MkDocs nav: `Module Docs -> Agents`

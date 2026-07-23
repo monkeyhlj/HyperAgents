@@ -584,7 +584,7 @@ def run(input_text, context):
 - ✅ 对话响应包含 used_mcps 标签
 - ✅ 前端 Workbench 显示 MCP 调用记录
 
-## 8. Using MCPs in Agent / 在 Agent 中使用 MCP
+## 7. Using MCPs in Agent / 在 Agent 中使用 MCP
 
 ### 关联 MCP 到 Agent
 

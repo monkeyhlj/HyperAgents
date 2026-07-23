@@ -35,6 +35,7 @@ nav:
   - Agent Authoring: modules/agents.zh-en.md
   - Runtime Run and Worker: guides/runtime-run-worker.zh-en.md
   - API Changelog: reference/api-changelog.zh-en.md
+  - Code and API Map: reference/code-api-map.zh-en.md
   - Deployment and Operations: operations/deployment-operations.zh-en.md
   - Testing Playbook: guides/testing-playbook.zh-en.md
   - Architecture Roadmap: reference/architecture-roadmap.zh-en.md

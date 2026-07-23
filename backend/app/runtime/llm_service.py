@@ -143,6 +143,14 @@ class LLMService:
                 return env_value
         if provider_name.strip().lower() == "openai":
             return settings.openai_default_model
+        # Handle NVIDIA provider specially
+        if provider_name.strip().lower() in {"nvidia", "nvida"}:
+            # Try to get from environment variable first (check both spellings)
+            nvidia_model = os.getenv("NVIDIA_DEFAULT_MODEL") or os.getenv("NVIDA_DEFAULT_MODEL")
+            if nvidia_model:
+                return nvidia_model
+            # Fallback to z-ai/glm-5.2
+            return "z-ai/glm-5.2"
         return settings.localhost_default_model
 
 

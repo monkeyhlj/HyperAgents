@@ -112,15 +112,19 @@ If you need a new provider, add a new template entry here and provide the matchi
 2. 向量数据库能力
 - PostgreSQL + pgvector extension
 
-3. 重试执行器（后续建议）
-- 当前是 DB queue + API/BackgroundTasks
-- 未来可升级为 Celery/RQ worker
+3. 重试执行器
+- 当前支持 DB queue + API fallback。
+- 当 `WORKER_ENABLED=true` 且 Redis/Celery 可用时，`retry-embeddings?enqueue=true` 会进入 Celery worker。
+- 当 worker 不可用时，接口会回退到 API 进程执行，避免本地联调被队列阻断。
 
 ## 五、前端怎么加 / How to Add via Frontend
 
 当前前端已支持：
 - Projects 页创建项目
 - Resources 页创建资源
+- Resources 默认模板加载与我的资源列表
+- Agent 页面项目级 Provider Connection：加载模型、测试连接、加密保存 API Key
+- MCP 创建/编辑页 Quick Test 与保存后的行级 Test
 - Workbench 页对话测试
 
 建议你下一步在前端新增两个页面：

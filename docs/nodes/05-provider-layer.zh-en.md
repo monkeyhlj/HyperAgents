@@ -4,23 +4,16 @@
 
 ## LLM Provider / Embedding Provider
 
-中文：
 Provider 层把上游模型能力统一成标准接口，当前支持：
-- OpenAI
-- localhost (兼容 OpenAI-style API，例如 Ollama/vLLM 网关)
 
-English:
-The provider layer standardizes upstream model capabilities. Current providers:
-- OpenAI
-- localhost (OpenAI-style API gateway, e.g., Ollama/vLLM)
+- `openai`: OpenAI-compatible provider。
+- `localhost`: 本地 OpenAI-style API，例如 Ollama/vLLM 网关。
+- env-prefix provider profile: 通过 `provider_profile` 映射自定义前缀，如 `ZHIPU_*`、`QWEN_*`。
+- Project-level Provider Connection: 通过 UI/API 保存 OpenAI-compatible Base URL + API Key。
 
 ## 配置项 / Configuration
 
-中文：
-所有配置统一从工作区根目录 `.env` 读取（模板见 `.env.example`）。
-
-English:
-All configuration is read from workspace-root `.env` (template: `.env.example`).
+`.env` 仍是平台级配置入口：
 
 - `OPENAI_API_KEY`
 - `OPENAI_BASE_URL`
@@ -32,46 +25,47 @@ All configuration is read from workspace-root `.env` (template: `.env.example`).
 - `RUNTIME_DEFAULT_PROVIDER`
 - `EMBEDDING_PROVIDER`
 - `MODEL_REQUEST_TIMEOUT_SECONDS`
+- `PROVIDER_CONNECTION_SECRET_KEY`
 
-### provider_profile 规则 / provider_profile Convention
+## provider_profile 规则 / provider_profile Convention
 
-中文：
 - 默认模板或资源可以带 `provider_profile`，用于映射环境变量前缀。
 - 例如 `provider_profile=zhipu` 时，后端读取 `ZHIPU_API_KEY`、`ZHIPU_BASE_URL`、`ZHIPU_DEFAULT_MODEL`。
 - `model_provider` 只表示运行时客户端类型，不存放真实密钥。
 
-English:
-- Default templates or resources can carry `provider_profile` to map env-variable prefixes.
-- For example, `provider_profile=zhipu` makes the backend read `ZHIPU_API_KEY`, `ZHIPU_BASE_URL`, and `ZHIPU_DEFAULT_MODEL`.
-- `model_provider` only indicates the runtime client type; it does not store secrets.
+## Provider Connection / 项目级 Provider Connection
 
-### 默认模板文件 / Default Template File
+Provider Connection 适合用户在项目内通过 UI 配置模型连接：
 
-中文：
-- 默认模板文件位于 `backend/app/core/default_resources.json`。
-- 这里适合放“可展示、可选择”的默认 Agent 模板，不适合放真实 API Key。
+- `base_url`: OpenAI-compatible endpoint。
+- `api_key`: 写入时加密保存，返回时只展示 masked key。
+- `default_model`: 默认模型。
+- `model_list_cache`: `/models` 探测结果缓存。
+- `last_test_status/error/at`: 最近一次测试结果。
 
-English:
-- The default template file is `backend/app/core/default_resources.json`.
-- It is suitable for displayable/selectable Agent templates, not for real API keys.
+对应 API：
+
+- `POST /api/v1/provider-connections/projects/{project_id}/probe-models`
+- `POST /api/v1/provider-connections/projects/{project_id}/test`
+- `GET/POST /api/v1/provider-connections/projects/{project_id}`
+- `GET/PATCH/DELETE /api/v1/provider-connections/{connection_id}`
+- `POST /api/v1/provider-connections/{connection_id}/test`
 
 ## 执行路径 / Execution Flow
 
-中文：
-1. Chat API 收到消息
-2. 若提供 `agent_id`，读取 agent resource 的 provider/model/prompt
-3. Runtime 调用 LLM Provider 生成回复
-4. Memory 写入时调用 Embedding Provider 生成向量
-
-English:
-1. Chat API receives message
-2. If `agent_id` exists, read provider/model/prompt from agent resource
-3. Runtime calls LLM provider to generate response
-4. Memory write calls embedding provider to generate vectors
+1. Chat API 收到消息。
+2. 若提供 `agent_id`，读取 Agent resource 的 provider/model/prompt/config。
+3. 若 Agent 绑定 `provider_connection_id`，优先使用项目级 Provider Connection。
+4. 否则按 `provider_profile` / `.env` 配置解析 provider。
+5. Runtime 调用 LLM Provider 生成回复。
+6. Memory 写入时调用 Embedding Provider 生成向量。
 
 ## 代码位置 / Code References
 
+- `backend/app/api/v1/provider_connections.py`
+- `backend/app/runtime/provider_connections.py`
 - `backend/app/runtime/providers.py`
+- `backend/app/runtime/llm_service.py`
 - `backend/app/runtime/embeddings.py`
-- `backend/app/runtime/executor.py`
+- `backend/app/services/secret_box.py`
 - `backend/app/core/config.py`

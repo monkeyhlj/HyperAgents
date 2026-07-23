@@ -85,9 +85,17 @@ class OpenAIProviderClient(ProviderClient):
     def __init__(self, profile_name: str = "openai") -> None:
         self._profile_name = profile_name
         self._env_prefix = _normalize_env_prefix(profile_name)
-        self._api_key = _env(f"{self._env_prefix}_API_KEY", settings.openai_api_key)
-        self._base_url = _env(f"{self._env_prefix}_BASE_URL", settings.openai_base_url)
-        self._default_model = _env(f"{self._env_prefix}_DEFAULT_MODEL", settings.openai_default_model)
+        
+        # Special handling for NVIDIA: check both NVIDIA_ and NVIDA_ spellings
+        if profile_name.lower() in {"nvidia", "nvida"}:
+            self._api_key = _env(f"{self._env_prefix}_API_KEY", None) or os.getenv("NVIDA_API_KEY") or settings.openai_api_key
+            self._base_url = _env(f"{self._env_prefix}_BASE_URL", None) or os.getenv("NVIDA_BASE_URL") or settings.openai_base_url
+            self._default_model = _env(f"{self._env_prefix}_DEFAULT_MODEL", None) or os.getenv("NVIDA_DEFAULT_MODEL") or "z-ai/glm-5.2"
+        else:
+            self._api_key = _env(f"{self._env_prefix}_API_KEY", settings.openai_api_key)
+            self._base_url = _env(f"{self._env_prefix}_BASE_URL", settings.openai_base_url)
+            self._default_model = _env(f"{self._env_prefix}_DEFAULT_MODEL", settings.openai_default_model)
+        
         # Keep timeout aligned with local provider timeout to avoid hanging requests.
         self._client = OpenAI(
             api_key=self._api_key,
@@ -175,6 +183,12 @@ class ProviderFactory:
             return OpenAIProviderClient(profile_name=provider_profile or "openai")
         if normalized in {"localhost", "ollama", "vllm"}:
             return LocalhostProviderClient()
+        if normalized in {"nvidia", "nvida"}:
+            # NVIDIA uses OpenAI-compatible API, so use OpenAIProviderClient
+            return OpenAIProviderClient(profile_name=provider_profile or "nvidia")
+        if normalized == "zhipu":
+            return OpenAIProviderClient(profile_name=provider_profile or "zhipu")
+        # Default to OpenAI-compatible client
         return OpenAIProviderClient(profile_name=provider_profile or provider_name)
 
 
