@@ -1,12 +1,24 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.exc import SQLAlchemyError
+import logging
 
 from app.api.router import api_router
 from app.core.config import settings
 from app.db.base import Base
 from app.db.session import engine
 import app.db.models  # noqa: F401
+
+# Configure logging to show all INFO and DEBUG level messages
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
+# Set specific loggers to INFO level
+logging.getLogger("app").setLevel(logging.INFO)
+logging.getLogger("uvicorn").setLevel(logging.INFO)
+logging.getLogger("uvicorn.access").setLevel(logging.INFO)
 
 
 app = FastAPI(title=settings.app_name, version=settings.app_version)

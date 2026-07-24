@@ -86,15 +86,26 @@ class OpenAIProviderClient(ProviderClient):
         self._profile_name = profile_name
         self._env_prefix = _normalize_env_prefix(profile_name)
         
-        # Special handling for NVIDIA: check both NVIDIA_ and NVIDA_ spellings
-        if profile_name.lower() in {"nvidia", "nvida"}:
-            self._api_key = _env(f"{self._env_prefix}_API_KEY", None) or os.getenv("NVIDA_API_KEY") or settings.openai_api_key
-            self._base_url = _env(f"{self._env_prefix}_BASE_URL", None) or os.getenv("NVIDA_BASE_URL") or settings.openai_base_url
-            self._default_model = _env(f"{self._env_prefix}_DEFAULT_MODEL", None) or os.getenv("NVIDA_DEFAULT_MODEL") or "z-ai/glm-5.2"
-        else:
-            self._api_key = _env(f"{self._env_prefix}_API_KEY", settings.openai_api_key)
-            self._base_url = _env(f"{self._env_prefix}_BASE_URL", settings.openai_base_url)
-            self._default_model = _env(f"{self._env_prefix}_DEFAULT_MODEL", settings.openai_default_model)
+        # Read config from environment variables using the normalized prefix
+        self._api_key = _env(f"{self._env_prefix}_API_KEY", None)
+        self._base_url = _env(f"{self._env_prefix}_BASE_URL", None)
+        self._default_model = _env(f"{self._env_prefix}_DEFAULT_MODEL", None)
+        
+        # Backward compatibility: for "nvidia"/"nvida" profile, check alternate spelling
+        if not self._api_key and profile_name.lower() in {"nvidia", "nvida"}:
+            self._api_key = os.getenv("NVIDA_API_KEY") or os.getenv("NVIDIA_API_KEY")
+        if not self._base_url and profile_name.lower() in {"nvidia", "nvida"}:
+            self._base_url = os.getenv("NVIDA_BASE_URL") or os.getenv("NVIDIA_BASE_URL")
+        if not self._default_model and profile_name.lower() in {"nvidia", "nvida"}:
+            self._default_model = os.getenv("NVIDA_DEFAULT_MODEL") or os.getenv("NVIDIA_DEFAULT_MODEL") or "z-ai/glm-5.2"
+        
+        # Final fallback to settings defaults (only for standard providers)
+        if not self._api_key:
+            self._api_key = settings.openai_api_key
+        if not self._base_url:
+            self._base_url = settings.openai_base_url
+        if not self._default_model:
+            self._default_model = settings.openai_default_model
         
         # Keep timeout aligned with local provider timeout to avoid hanging requests.
         self._client = OpenAI(

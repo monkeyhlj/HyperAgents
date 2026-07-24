@@ -7,6 +7,7 @@ from app.models.enums import ResourceKind, Visibility
 from app.schemas.registry import MCPProbeRequest, MCPProbeResponse, RegistryItemCreate, RegistryListResponse
 from app.schemas.resource import Resource
 from app.services.postgres_store import store
+from app.runtime.mcp_client import MCPStreamableHttpClient, MCPSSEClient
 
 
 router = APIRouter()
@@ -78,19 +79,26 @@ def probe_mcp_server(
     transport = str(config.get("transport") or "streamable_http").strip().lower()
     endpoint_url = str(config.get("endpoint_url") or "").strip()
 
-    if transport != "streamable_http":
+    if transport not in ("streamable_http", "sse"):
         return MCPProbeResponse(
             ok=False,
             transport=transport,
             endpoint_url=endpoint_url or None,
-            error="Only streamable_http probe is supported currently",
+            error=f"Unsupported transport: {transport}. Only streamable_http and sse are supported.",
         )
 
-    if not endpoint_url:
+    if transport == "streamable_http" and not endpoint_url:
         return MCPProbeResponse(
             ok=False,
             transport=transport,
             error="endpoint_url is required for streamable_http transport",
+        )
+
+    if transport == "sse" and not endpoint_url:
+        return MCPProbeResponse(
+            ok=False,
+            transport=transport,
+            error="endpoint_url is required for sse transport",
         )
 
     health_ok = False
@@ -99,25 +107,22 @@ def probe_mcp_server(
     timeout_seconds = float(config.get("timeout_seconds") or 8)
 
     try:
-        with httpx.Client(timeout=timeout_seconds) as client:
-            health_response = client.get(f"{endpoint_url.rstrip('/')}/health")
-            health_ok = health_response.status_code == 200
+        # Use the unified MCP client that supports both transports
+        if transport == "streamable_http":
+            client = MCPStreamableHttpClient(config)
+            # For streamable_http, check health endpoint
+            with httpx.Client(timeout=timeout_seconds) as http_client:
+                health_response = http_client.get(f"{endpoint_url.rstrip('/')}/health")
+                health_ok = health_response.status_code == 200
+        else:
+            # For SSE, we don't have a separate health check
+            client = MCPSSEClient(config)
+            health_ok = True
 
-            tools_response = client.get(f"{endpoint_url.rstrip('/')}/tools")
-            if tools_response.status_code == 200:
-                raw = tools_response.json()
-                if isinstance(raw, dict):
-                    tool_items = raw.get("tools") or []
-                elif isinstance(raw, list):
-                    tool_items = raw
-                else:
-                    tool_items = []
-                tools = [
-                    str(item.get("name") or "").strip()
-                    for item in tool_items
-                    if isinstance(item, dict) and str(item.get("name") or "").strip()
-                ]
-                tools_ok = True
+        # Try to list tools for both transports
+        tool_list = client.list_tools()
+        tools = [str(item.get("name") or "").strip() for item in tool_list if isinstance(item, dict)]
+        tools_ok = True
     except Exception as exc:
         return MCPProbeResponse(
             ok=False,

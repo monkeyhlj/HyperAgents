@@ -48,7 +48,9 @@
     "model_name": "z-ai/glm-5.2",
     "provider_profile": "nvidia",
     "config": {
-      "system_prompt": "You are a helpful AI assistant."
+      "system_prompt": "You are a helpful AI assistant.",
+      "engine_type": "react",
+      "max_iterations": 10
     }
   }
 ]

@@ -348,6 +348,7 @@
                     <FormItem label="Transport">
                       <Select v-model="form.mcp_transport">
                         <Option value="streamable_http">streamable_http</Option>
+                        <Option value="sse">sse (Server-Sent Events)</Option>
                         <Option value="stdio">stdio</Option>
                       </Select>
                     </FormItem>
@@ -367,10 +368,10 @@
                   </Col>
                 </Row>
 
-                <Row v-if="form.mcp_transport === 'streamable_http'" :gutter="16">
+                <Row v-if="form.mcp_transport === 'streamable_http' || form.mcp_transport === 'sse'" :gutter="16">
                   <Col :xs="24" :md="24">
                     <FormItem label="Endpoint URL">
-                      <Input v-model="form.mcp_endpoint_url" placeholder="e.g. http://127.0.0.1:8099" />
+                      <Input v-model="form.mcp_endpoint_url" :placeholder="form.mcp_transport === 'sse' ? 'e.g. https://mcp.amap.com/sse?key=...' : 'e.g. http://127.0.0.1:8099'" />
                     </FormItem>
                   </Col>
                 </Row>
@@ -767,6 +768,7 @@ async function loadResource() {
     delete advancedConfig.mcp_ids;
     delete advancedConfig.knowledge_base_ids;
     delete advancedConfig.provider_connection_id;
+    delete advancedConfig.engine_type;
     form.value.config_json = JSON.stringify(advancedConfig, null, 2);
     return;
   }
@@ -924,8 +926,8 @@ function buildRuntimeConfig() {
     };
   }
   if (isMcpKind.value) {
-    if (form.value.mcp_transport === "streamable_http" && !(form.value.mcp_endpoint_url || "").trim()) {
-      throw new Error("MCP endpoint URL is required for streamable_http transport");
+    if ((form.value.mcp_transport === "streamable_http" || form.value.mcp_transport === "sse") && !(form.value.mcp_endpoint_url || "").trim()) {
+      throw new Error("MCP endpoint URL is required for streamable_http and sse transports");
     }
     if (form.value.mcp_transport === "stdio" && !(form.value.mcp_command || "").trim()) {
       throw new Error("MCP command is required for stdio transport");
@@ -933,7 +935,7 @@ function buildRuntimeConfig() {
     const timeoutSeconds = Number(form.value.mcp_timeout_seconds || 8);
     const baseConfig = {
       transport: form.value.mcp_transport,
-      endpoint_url: form.value.mcp_transport === "streamable_http" ? (form.value.mcp_endpoint_url || "").trim() : "",
+      endpoint_url: (form.value.mcp_transport === "streamable_http" || form.value.mcp_transport === "sse") ? (form.value.mcp_endpoint_url || "").trim() : "",
       command: form.value.mcp_transport === "stdio" ? (form.value.mcp_command || "").trim() : "",
       args: parseJsonValue(form.value.mcp_args_json, "MCP args") || [],
       headers: parseJsonValue(form.value.mcp_headers_json, "MCP headers") || {},
@@ -948,7 +950,10 @@ function buildRuntimeConfig() {
   if (!isAgentKind.value) {
     return parseAdvancedConfig();
   }
+  // Automatically use ReAct engine when MCPs are present
+  const engine_type = (form.value.mcp_ids && form.value.mcp_ids.length > 0) ? "react" : "legacy";
   return {
+    engine_type,
     run_mode: form.value.run_mode,
     system_prompt: form.value.system_prompt,
     provider_connection_id: form.value.provider_config_mode === "connection" ? (form.value.provider_connection_id || null) : null,

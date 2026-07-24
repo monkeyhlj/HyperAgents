@@ -245,6 +245,8 @@ class ToolManager:
 
         # 1. Load MCP tools
         mcp_ids = agent_config.get("mcp_ids", [])
+        logger.info(f"Loading tools - mcp_ids from config: {mcp_ids}, context MCPs: {list(context.get('mcps', {}).keys())}")
+        
         for mcp_id in mcp_ids:
             try:
                 mcp_spec = context.get("mcps", {}).get(mcp_id)

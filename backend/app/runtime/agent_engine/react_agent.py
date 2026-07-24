@@ -300,13 +300,15 @@ Input: {{"location": "Beijing"}}
 
 When you have all the information needed to fully answer the user's question, respond with:
 Thought: I now have enough information to answer
-Final Answer: <your final answer to the user>
+Final Answer: <your detailed final answer to the user, including all relevant details>
 
 RULES:
 - ALWAYS respond in the format: Thought, Action, Input OR Final Answer
 - Action must be EXACTLY one of: {tool_names if tool_names else "(none)"}
 - Input must be valid JSON
-- Use tools first, only provide Final Answer when you have the information needed"""
+- Use tools first, only provide Final Answer when you have the information needed
+- When providing Final Answer, include ALL relevant information from the tool results
+- Be comprehensive and detailed in your final answer"""
 
     def _get_thought(self, messages: list[dict], tools: list[dict]) -> str:
         """Get LLM thought (reasoning)."""
@@ -409,7 +411,7 @@ RULES:
     def _extract_final_answer(self, thought: str) -> str:
         """Extract final answer from thought."""
         match = re.search(
-            r"Final Answer:\s*(.+?)(?=\n|$)",
+            r"Final Answer:\s*(.+)$",
             thought,
             re.IGNORECASE | re.DOTALL,
         )

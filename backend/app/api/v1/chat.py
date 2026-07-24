@@ -189,6 +189,7 @@ async def send_message(
         model_provider = agent_resource.model_provider
         model_name = agent_resource.model_name
         agent_config = dict(agent_resource.config or {})
+        logger.info(f"[send_message] Agent resource loaded: id={payload.agent_id}, raw_config={agent_resource.config}")
         # Override agent config with request parameters if provided
         if payload.engine_type:
             agent_config["engine_type"] = payload.engine_type
@@ -226,7 +227,9 @@ async def send_message(
         else:
             mcp_ids_list = [str(mid) for mid in raw_mcp_ids if mid]
         
-        logger.info(f"[send_message] Agent {payload.agent_id} has mcp_ids: {mcp_ids_list}")
+        logger.info(f"[send_message] Agent {payload.agent_id} config: {agent_config}")
+        logger.info(f"[send_message] Agent {payload.agent_id} has mcp_ids (raw): {raw_mcp_ids}")
+        logger.info(f"[send_message] Agent {payload.agent_id} has mcp_ids (list): {mcp_ids_list}")
         
         mcps = store.list_mcp_resources_for_project(
             db,
@@ -345,8 +348,17 @@ async def send_message(
             # ------------------------------------------------------------------
             engine_type = str(agent_config.get("engine_type", "legacy")).strip().lower()
             
+            # Auto-enable ReAct engine if MCPs are present
+            if not engine_type or engine_type == "legacy":
+                mcp_ids_check = agent_config.get("mcp_ids") or []
+                if mcp_ids_check and len(mcp_ids_check) > 0:
+                    engine_type = "react"
+                    logger.info(f"[send_message] Auto-enabling ReAct engine due to presence of MCPs")
+            
+            logger.info(f"[send_message] engine_type resolved to: '{engine_type}'")
+            
             if engine_type == "react":
-                logger.info(f"[send_message] Using ReAct Agent Engine (agent={payload.agent_id})")
+                logger.info(f"[send_message] ✓ Using ReAct Agent Engine (agent={payload.agent_id})")
                 try:
                     # Initialize ReAct Agent
                     llm_wrapper = LangChainLLMWrapper(
@@ -355,6 +367,8 @@ async def send_message(
                         temperature=float(agent_config.get("temperature", 0.2)),
                         provider=model_provider or "openai",
                         provider_profile=provider_profile,
+                        provider_connection_id=provider_connection_id,
+                        provider_connection=provider_connection,
                     )
                     tool_manager = ToolManager()
                     agent = ReActAgent(
@@ -407,6 +421,7 @@ async def send_message(
                 # ------------------------------------------------------------------
                 # LEGACY: Original agentic loop (function calling based)
                 # ------------------------------------------------------------------
+                logger.info(f"[send_message] ✗ Using LEGACY engine (engine_type={engine_type}, agent={payload.agent_id})")
                 # Check if model supports function calling.
                 # ------------------------------------------------------------------
                 supports_fc = _supports_function_calling(model_name or "")

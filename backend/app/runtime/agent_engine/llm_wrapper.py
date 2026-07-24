@@ -26,6 +26,8 @@ class LangChainLLMWrapper(LLM):
         max_tokens: Maximum tokens to generate
         provider: Provider name ("openai", "localhost", etc.)
         provider_profile: Optional provider configuration profile name
+        provider_connection: Optional custom provider connection config
+        provider_connection_id: Optional ID of stored provider connection
     """
 
     llm_service: Any = None  # LLMService instance
@@ -34,6 +36,8 @@ class LangChainLLMWrapper(LLM):
     max_tokens: Optional[int] = None
     provider: str = "openai"
     provider_profile: Optional[str] = None
+    provider_connection: Optional[dict] = None
+    provider_connection_id: Optional[str] = None
 
     model_config = ConfigDict(
         arbitrary_types_allowed=True,
@@ -69,6 +73,8 @@ class LangChainLLMWrapper(LLM):
                     model_provider=self.provider,
                     model_name=self.model_name,
                     provider_profile=self.provider_profile,
+                    provider_connection_id=self.provider_connection_id,
+                    provider_connection=self.provider_connection,
                     system_prompt=None,
                 )
             )
@@ -100,6 +106,8 @@ class LangChainLLMWrapper(LLM):
             model_provider=self.provider,
             model_name=self.model_name,
             provider_profile=self.provider_profile,
+            provider_connection_id=self.provider_connection_id,
+            provider_connection=self.provider_connection,
             messages=messages,
             tools=tools,
         )
