@@ -140,6 +140,19 @@ const routes = [
     }
   },
   {
+    path: "/resources/knowledge-bases/:resourceId",
+    redirect: { name: "resources-knowledge-bases-detail" }
+  },
+  {
+    path: "/resources/knowledge-bases/:resourceId/documents",
+    name: "resources-knowledge-bases-detail",
+    component: () => import("../views/resources/KnowledgeDetailView.vue"),
+    meta: {
+      requiresAuth: true,
+      title: "Knowledge Base Documents"
+    }
+  },
+  {
     path: "/workflows",
     name: "workflows",
     component: () => import("../views/resources/ResourceOwnedListView.vue"),

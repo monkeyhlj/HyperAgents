@@ -228,3 +228,130 @@ class MemoryEmbeddingJobModel(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow
     )
+
+
+# ==================== Knowledge Base Models ====================
+
+class DocumentModel(Base):
+    """单个文档（关联到某个 Knowledge Resource）"""
+    __tablename__ = "documents"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    knowledge_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("resources.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    project_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    
+    # 文档基本信息
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    file_type: Mapped[str] = mapped_column(String(20), nullable=False)  # "pdf", "docx", "md", "txt"
+    file_path: Mapped[str] = mapped_column(String(500), nullable=False)  # 存储路径
+    file_size: Mapped[int] = mapped_column(nullable=False)  # 字节数
+    file_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)  # SHA256 用于去重
+    
+    # 处理状态
+    status: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="pending", index=True
+    )  # "pending" | "processing" | "ready" | "failed"
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    
+    # 统计信息
+    chunk_count: Mapped[int] = mapped_column(default=0, nullable=False)
+    total_tokens: Mapped[int] = mapped_column(default=0, nullable=False)
+    
+    # 元数据
+    doc_metadata: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    
+    # 时间戳
+    upload_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    created_by: Mapped[str] = mapped_column(String(120), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+    
+    __table_args__ = (
+        Index("ix_documents_knowledge_status", "knowledge_id", "status"),
+    )
+
+
+class DocumentChunkModel(Base):
+    """文档分块（用于向量化和检索）"""
+    __tablename__ = "document_chunks"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    document_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    knowledge_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("resources.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    project_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    
+    # 分块信息
+    chunk_index: Mapped[int] = mapped_column(nullable=False)  # 分块序号
+    content: Mapped[str] = mapped_column(Text, nullable=False)  # 文本内容
+    tokens: Mapped[int] = mapped_column(default=0, nullable=False)  # token 数
+    
+    # 向量嵌入
+    embedding: Mapped[list[float] | None] = mapped_column(
+        Vector(3072), nullable=True  # OpenAI text-embedding-3-small
+    )
+    embedding_status: Mapped[str] = mapped_column(
+        String(30), default="pending", nullable=False, index=True
+    )  # "pending" | "done" | "failed"
+    embedding_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    embedding_model: Mapped[str] = mapped_column(
+        String(120), default="openai:text-embedding-3-small", nullable=False
+    )
+    
+    # 元数据（页码、位置等）
+    source_metadata: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    
+    # 时间戳
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+    
+    __table_args__ = (
+        Index("ix_document_chunks_knowledge_embedding", "knowledge_id", "embedding_status"),
+    )
+
+
+class AgentKnowledgeBindingModel(Base):
+    """Agent 与 Knowledge 的绑定关系"""
+    __tablename__ = "agent_knowledge_bindings"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    agent_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("resources.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    knowledge_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("resources.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    project_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    
+    # 优先级和启用状态
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    priority: Mapped[int] = mapped_column(default=0, nullable=False)  # 越高越优先
+    
+    # 绑定特定配置（覆盖知识库默认配置）
+    similarity_threshold: Mapped[float | None] = mapped_column(Float, nullable=True)  # 0.0-1.0
+    top_k: Mapped[int | None] = mapped_column(nullable=True)  # 返回 Top-K 结果
+    
+    # 时间戳
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+    
+    __table_args__ = (
+        Index("ix_agent_knowledge_bindings_agent_knowledge", "agent_id", "knowledge_id", unique=True),
+    )

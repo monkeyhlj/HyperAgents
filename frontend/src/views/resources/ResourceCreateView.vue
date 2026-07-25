@@ -77,6 +77,18 @@
               <Input v-model="form.description" type="textarea" :rows="3" maxlength="1000" show-word-limit />
             </FormItem>
 
+            <Alert v-if="isKnowledgeKind" show-icon type="info" style="margin-bottom: 16px">
+              <template #desc>
+                <strong>📚 Knowledge Base Creation Guide</strong>
+                <div style="margin-top: 8px; line-height: 1.6;">
+                  <div>1️⃣ Fill in the basic information (name, description, config)</div>
+                  <div>2️⃣ Click <strong>"Create"</strong> button below</div>
+                  <div>3️⃣ You'll be automatically redirected to the <strong>Document Management</strong> page</div>
+                  <div>4️⃣ Upload your documents (PDF, DOCX, MD, TXT) on that page</div>
+                </div>
+              </template>
+            </Alert>
+
             <Row v-if="isAgentKind" :gutter="16">
               <Col :xs="24" :md="12">
                 <FormItem label="Agent Run Mode">
@@ -593,6 +605,7 @@ const kind = computed(() => route.meta.kind || "agent");
 const isAgentKind = computed(() => kind.value === "agent");
 const isToolKind = computed(() => kind.value === "tool");
 const isMcpKind = computed(() => kind.value === "mcp");
+const isKnowledgeKind = computed(() => kind.value === "knowledge_base");
 const pageTitle = computed(() => route.meta.title || "Create Resource");
 const backRoute = computed(() => route.meta.backRoute || "resources-overview");
 const isEditMode = computed(() => route.meta.mode === "edit");
@@ -680,6 +693,9 @@ function defaultAdvancedConfigJsonByKind(targetKind) {
   }
   if (targetKind === "agent") {
     return "{\n  \"provider_profile\": \"qwen\",\n  \"temperature\": 0.2\n}";
+  }
+  if (targetKind === "knowledge_base") {
+    return "{\n  \"chunk_size\": 512,\n  \"chunk_overlap\": 50,\n  \"embedding_model\": \"openai:text-embedding-3-small\",\n  \"top_k\": 5,\n  \"similarity_threshold\": 0.7\n}";
   }
   return "{}";
 }
@@ -1234,14 +1250,24 @@ async function submitForm() {
       provider_connection_id: isAgentKind.value && form.value.provider_config_mode === "connection" ? (form.value.provider_connection_id || null) : null,
       config
     };
+    let createdResourceId = null;
     if (isEditMode.value && resourceId.value) {
       await api.updateResource(resourceId.value, { ...payload, project_id: form.value.project_id });
       Message.success(`${kind.value} updated`);
+      goBack();
     } else {
-      await api.createResource(form.value.project_id, payload);
+      const result = await api.createResource(form.value.project_id, payload);
+      createdResourceId = result.id;
       Message.success(`${kind.value} created`);
+      // Navigate to documents page for Knowledge Base
+      if (isKnowledgeKind.value && createdResourceId) {
+        setTimeout(() => {
+          router.push({ name: "resources-knowledge-bases-detail", params: { resourceId: createdResourceId } });
+        }, 1000);
+      } else {
+        goBack();
+      }
     }
-    goBack();
   } catch (error) {
     Message.error(error.message || `${isEditMode.value ? "Update" : "Create"} resource failed`);
   } finally {

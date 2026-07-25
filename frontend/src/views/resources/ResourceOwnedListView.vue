@@ -55,6 +55,15 @@
           <Space>
             <Button size="small" @click="openDetail(row)">Detail</Button>
             <Button
+              v-if="resourceKind === 'knowledge_base'"
+              size="small"
+              type="primary"
+              ghost
+              @click="openDocuments(row)"
+            >
+              Documents
+            </Button>
+            <Button
               v-if="resourceKind === 'mcp'"
               size="small"
               :loading="probingById[row.id] === true"
@@ -253,6 +262,10 @@ function openEditPage(row) {
     return;
   }
   router.push({ name: routeName, params: { resourceId: row.id } });
+}
+
+function openDocuments(row) {
+  router.push({ name: "resources-knowledge-bases-detail", params: { resourceId: row.id } });
 }
 
 function openDelete(row) {

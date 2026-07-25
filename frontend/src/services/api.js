@@ -202,5 +202,47 @@ export const api = {
   },
   listMessages(sessionId) {
     return request(`/api/v1/chat/sessions/${sessionId}/messages`);
+  },
+  getKnowledgeDocuments(knowledgeId, query = {}) {
+    return request(withQuery(`/api/v1/knowledge/${knowledgeId}/documents`, query));
+  },
+  uploadKnowledgeDocument(knowledgeId, formData) {
+    const headers = { Authorization: "" };
+    if (authState.token) {
+      headers.Authorization = `Bearer ${authState.token}`;
+    }
+    return fetch(`${API_BASE_URL}/api/v1/knowledge/${knowledgeId}/documents/upload`, {
+      method: "POST",
+      body: formData,
+      headers: {
+        ...headers
+      }
+    }).then(async (response) => {
+      const text = await response.text();
+      let data = {};
+      try {
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        data = text ? { detail: text } : {};
+      }
+
+      if (!response.ok) {
+        const detail = data?.detail || `Request failed (${response.status})`;
+        const error = new Error(detail);
+        error.response = { data };
+        throw error;
+      }
+      return data;
+    });
+  },
+  deleteKnowledgeDocument(knowledgeId, documentId) {
+    return request(`/api/v1/knowledge/${knowledgeId}/documents/${documentId}`, {
+      method: "DELETE"
+    });
+  },
+  reprocessKnowledgeDocuments(knowledgeId) {
+    return request(`/api/v1/knowledge/${knowledgeId}/reprocess`, {
+      method: "POST"
+    });
   }
 };

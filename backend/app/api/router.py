@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.api.v1 import auth, chat, memory, projects, provider_connections, registry, resources
+from app.api.v1 import auth, chat, memory, projects, provider_connections, registry, resources, knowledge
 
 
 api_router = APIRouter()
@@ -11,4 +11,5 @@ api_router.include_router(provider_connections.router, prefix="/v1/provider-conn
 api_router.include_router(chat.router, prefix="/v1/chat", tags=["chat"])
 api_router.include_router(memory.router, prefix="/v1/memory", tags=["memory"])
 api_router.include_router(registry.router, prefix="/v1/registry", tags=["registry"])
+api_router.include_router(knowledge.router, prefix="/v1/knowledge", tags=["knowledge"])
 

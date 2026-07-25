@@ -13,6 +13,7 @@ from app.runtime.mcp_client import (
     get_mcp_client,
     mcp_tool_to_openai,
 )
+from app.runtime.knowledge_service import KnowledgeService
 from app.runtime.providers import _supports_function_calling
 from app.runtime.agent_engine import LangChainLLMWrapper, ReActAgent, ToolManager
 from app.schemas.resource import (
