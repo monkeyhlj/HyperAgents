@@ -62,7 +62,7 @@ async def process_document(db: Session, document: DocumentModel):
             raise ValueError("Document is empty or could not be parsed")
         
         # Step 2: Split into chunks
-        config = document.metadata or {}
+        config = document.doc_metadata or {}
         chunk_size = config.get("chunk_size", 512)
         chunk_overlap = config.get("chunk_overlap", 50)
         

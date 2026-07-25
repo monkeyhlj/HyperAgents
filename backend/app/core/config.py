@@ -48,7 +48,14 @@ class Settings(BaseModel):
     auto_create_tables: bool = _as_bool("AUTO_CREATE_TABLES", False)
     cors_allow_origins: list[str] = _as_str_list(
         "CORS_ALLOW_ORIGINS",
-        ["http://localhost:5173", "http://127.0.0.1:5173"],
+        [
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            "http://localhost:5174",
+            "http://127.0.0.1:5174",
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+        ],
     )
     memory_embedding_dimensions: int = _as_int("MEMORY_EMBEDDING_DIMENSIONS", 1536)
     openai_api_key: str | None = os.getenv("OPENAI_API_KEY")

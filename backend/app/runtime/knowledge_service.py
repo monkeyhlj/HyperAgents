@@ -44,17 +44,32 @@ class KnowledgeService:
                 return f.read()
         
         elif file_type == "pdf":
-            # Use PyPDF2 for PDF parsing
+            # Try pymupdf first (better Chinese PDF support), fallback to PyPDF2
+            try:
+                import fitz  # pymupdf
+                text = []
+                doc = fitz.open(file_path)
+                for page in doc:
+                    text.append(page.get_text())
+                doc.close()
+                return "\n".join(text)
+            except ImportError:
+                pass
+            except Exception as e:
+                logger.warning(f"pymupdf failed: {e}, trying PyPDF2")
+            
             try:
                 import PyPDF2
                 text = []
                 with open(file_path, "rb") as f:
                     pdf_reader = PyPDF2.PdfReader(f)
                     for page in pdf_reader.pages:
-                        text.append(page.extract_text())
+                        page_text = page.extract_text()
+                        if page_text:
+                            text.append(page_text)
                 return "\n".join(text)
             except ImportError:
-                logger.warning("PyPDF2 not installed, returning empty content for PDF")
+                logger.warning("Neither pymupdf nor PyPDF2 installed, returning empty content for PDF")
                 return ""
         
         elif file_type == "docx":
@@ -147,7 +162,7 @@ class KnowledgeService:
         if embedding_provider != "openai":
             raise ValueError(f"Unsupported embedding provider: {embedding_provider}")
         
-        if not settings.OPENAI_API_KEY:
+        if not settings.openai_api_key:
             raise ValueError("OPENAI_API_KEY not set")
         
         # OpenAI API expects max 2048 texts per request
@@ -159,13 +174,13 @@ class KnowledgeService:
             
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(
-                    f"{settings.OPENAI_BASE_URL}/embeddings",
+                    f"{settings.openai_base_url}/embeddings",
                     json={
                         "input": batch,
                         "model": model,
                     },
                     headers={
-                        "Authorization": f"Bearer {settings.OPENAI_API_KEY}",
+                        "Authorization": f"Bearer {settings.openai_api_key}",
                         "Content-Type": "application/json",
                     }
                 )
@@ -197,69 +212,129 @@ class KnowledgeService:
         db: Session,
         knowledge_id: str,
         query_text: str,
-        query_embedding: list[float],
+        query_embedding: list[float] | None = None,
         top_k: int = 3,
-        similarity_threshold: float = 0.7,
+        similarity_threshold: float = 0.3,
     ) -> list[dict]:
         """
-        Retrieve relevant chunks from knowledge base using similarity search.
-        
-        Args:
-            db: Database session
-            knowledge_id: ID of knowledge resource
-            query_text: User query text
-            query_embedding: Embedding vector of query
-            top_k: Number of results to return
-            similarity_threshold: Minimum similarity score
-            
-        Returns:
-            List of relevant chunks with metadata
+        Retrieve relevant chunks from knowledge base.
+        Uses vector similarity search if embedding provided, otherwise full-text search.
         """
-        from sqlalchemy import func
-        
-        # Convert list to PostgreSQL vector format
-        query_vector = json.dumps(query_embedding)
-        
-        # PostgreSQL similarity search using cosine distance
-        stmt = select(
-            DocumentChunkModel.id,
-            DocumentChunkModel.content,
-            DocumentChunkModel.document_id,
-            DocumentModel.filename,
-            DocumentChunkModel.source_metadata,
-            # Calculate cosine similarity (1 - distance)
-            (1 - func.cast(
-                DocumentChunkModel.embedding.op('<->')(query_vector),
-                float
-            )).label("similarity")
-        ).join(
-            DocumentModel,
-            DocumentChunkModel.document_id == DocumentModel.id
-        ).where(
-            and_(
-                DocumentChunkModel.knowledge_id == knowledge_id,
-                DocumentChunkModel.embedding_status == "done",
-                DocumentModel.status == "ready",
-            )
-        ).order_by(
-            DocumentChunkModel.embedding.op('<->')(query_vector)
-        ).limit(top_k)
-        
-        results = db.execute(stmt).fetchall()
-        
+        from sqlalchemy import func, or_
+
         retrieved_chunks = []
-        for row in results:
-            # Only include chunks above threshold
-            if row.similarity >= similarity_threshold:
-                retrieved_chunks.append({
-                    "chunk_id": row.id,
-                    "content": row.content,
-                    "document_id": row.document_id,
-                    "filename": row.filename,
-                    "similarity": float(row.similarity),
-                    "metadata": row.source_metadata,
-                })
-        
+
+        # Vector search (only when query_embedding is available and chunks have embeddings)
+        if query_embedding:
+            query_vector = json.dumps(query_embedding)
+            stmt = select(
+                DocumentChunkModel.id,
+                DocumentChunkModel.content,
+                DocumentChunkModel.document_id,
+                DocumentModel.filename,
+                DocumentChunkModel.source_metadata,
+                (1 - func.cast(
+                    DocumentChunkModel.embedding.op('<->')(query_vector),
+                    float
+                )).label("similarity")
+            ).join(
+                DocumentModel,
+                DocumentChunkModel.document_id == DocumentModel.id
+            ).where(
+                and_(
+                    DocumentChunkModel.knowledge_id == knowledge_id,
+                    DocumentChunkModel.embedding_status == "done",
+                    DocumentModel.status == "ready",
+                )
+            ).order_by(
+                DocumentChunkModel.embedding.op('<->')(query_vector)
+            ).limit(top_k)
+            
+            results = db.execute(stmt).fetchall()
+            for row in results:
+                if row.similarity >= similarity_threshold:
+                    retrieved_chunks.append({
+                        "chunk_id": row.id,
+                        "content": row.content,
+                        "document_id": row.document_id,
+                        "filename": row.filename,
+                        "similarity": float(row.similarity),
+                        "metadata": row.source_metadata,
+                    })
+
+        # Full-text keyword search fallback (when no vector results or no embedding)
+        if not retrieved_chunks:
+            logger.info(f"[RAG] Using full-text search for knowledge_id={knowledge_id}")
+            # Generate search keywords from the query
+            # For Chinese text without spaces, generate n-grams prioritizing longer ones
+            normalized = query_text.replace("，", " ").replace("。", " ").replace("？", " ").replace("?", " ").replace("、", " ")
+            tokens = [t for t in normalized.split() if len(t) > 1]
+            
+            # Primary keywords: 4-char n-grams (specific) and full tokens
+            primary_kws = set()
+            all_kws = set()
+            
+            for token in tokens:
+                primary_kws.add(token)
+                all_kws.add(token)
+            
+            # If query has no spaces (pure Chinese), generate n-grams
+            query_for_ngrams = "".join(tokens) if tokens else query_text
+            for n in (4, 3):
+                for i in range(len(query_for_ngrams) - n + 1):
+                    sub = query_for_ngrams[i:i+n]
+                    if n == 4:
+                        primary_kws.add(sub)
+                    all_kws.add(sub)
+            
+            search_kws = list(primary_kws)[:10]
+            score_kws = list(all_kws)
+            logger.info(f"[RAG] Full-text search keywords: {search_kws}")
+            
+            if search_kws:
+                from sqlalchemy import or_
+                conditions = [DocumentChunkModel.content.contains(kw) for kw in search_kws]
+                ft_stmt = select(
+                    DocumentChunkModel.id,
+                    DocumentChunkModel.content,
+                    DocumentChunkModel.document_id,
+                    DocumentModel.filename,
+                    DocumentChunkModel.source_metadata,
+                ).join(
+                    DocumentModel,
+                    DocumentChunkModel.document_id == DocumentModel.id
+                ).where(
+                    and_(
+                        DocumentChunkModel.knowledge_id == knowledge_id,
+                        DocumentModel.status == "ready",
+                        or_(*conditions),
+                    )
+                ).limit(top_k * 3)  # fetch more, then re-rank
+
+                ft_results = db.execute(ft_stmt).fetchall()
+                
+                # Score: count DISTINCT keywords present (not frequency)
+                # Weight 4-char primary keywords higher than 3-char secondary ones
+                scored = []
+                for row in ft_results:
+                    primary_hits = sum(1 for kw in primary_kws if kw in row.content)
+                    secondary_hits = sum(1 for kw in (all_kws - primary_kws) if kw in row.content)
+                    # Primary keywords (4-char, more specific) worth 3x more
+                    score = primary_hits * 3 + secondary_hits
+                    scored.append((score, row))
+                scored.sort(key=lambda x: x[0], reverse=True)
+                
+                for score, row in scored[:top_k]:
+                    similarity = min(0.5 + score * 0.03, 0.9)
+                    retrieved_chunks.append({
+                        "chunk_id": row.id,
+                        "content": row.content,
+                        "document_id": row.document_id,
+                        "filename": row.filename,
+                        "similarity": similarity,
+                        "metadata": row.source_metadata,
+                    })
+
         return retrieved_chunks
 
     @staticmethod
@@ -267,63 +342,66 @@ class KnowledgeService:
         db: Session,
         agent_id: str,
         query_text: str,
-        query_embedding: list[float],
+        query_embedding: list[float] | None = None,
+        knowledge_base_ids: list[str] | None = None,
     ) -> str:
         """
         Build RAG context by retrieving from all bound knowledge bases.
-        
-        Args:
-            db: Database session
-            agent_id: ID of agent
-            query_text: User query
-            query_embedding: Query embedding
-            
-        Returns:
-            Formatted RAG context to be added to LLM prompt
+        Falls back to knowledge_base_ids if no DB bindings found.
         """
-        # Get all knowledge bases bound to this agent
-        stmt = select(AgentKnowledgeBindingModel).where(
-            and_(
-                AgentKnowledgeBindingModel.agent_id == agent_id,
-                AgentKnowledgeBindingModel.enabled == True,
-            )
-        ).order_by(
-            AgentKnowledgeBindingModel.priority.desc()
-        )
-        
-        bindings = db.execute(stmt).scalars().all()
-        
-        if not bindings:
-            return ""
-        
         all_chunks = []
-        
-        for binding in bindings:
-            # Use binding-specific config or defaults
-            top_k = binding.top_k or 3
-            similarity_threshold = binding.similarity_threshold or 0.7
-            
-            chunks = await KnowledgeService.retrieve_from_knowledge(
-                db=db,
-                knowledge_id=binding.knowledge_id,
-                query_text=query_text,
-                query_embedding=query_embedding,
-                top_k=top_k,
-                similarity_threshold=similarity_threshold,
-            )
-            
-            all_chunks.extend(chunks)
-        
+
+        # First try: knowledge_base_ids passed directly (from agent_config)
+        if knowledge_base_ids:
+            for kb_id in knowledge_base_ids:
+                chunks = await KnowledgeService.retrieve_from_knowledge(
+                    db=db,
+                    knowledge_id=kb_id,
+                    query_text=query_text,
+                    query_embedding=query_embedding,
+                    top_k=5,
+                    similarity_threshold=0.3,
+                )
+                logger.info(f"[RAG] knowledge_id={kb_id}: {len(chunks)} chunks retrieved")
+                all_chunks.extend(chunks)
+
+        # Second try: DB bindings table
         if not all_chunks:
+            stmt = select(AgentKnowledgeBindingModel).where(
+                and_(
+                    AgentKnowledgeBindingModel.agent_id == agent_id,
+                    AgentKnowledgeBindingModel.enabled == True,
+                )
+            ).order_by(
+                AgentKnowledgeBindingModel.priority.desc()
+            )
+            bindings = db.execute(stmt).scalars().all()
+
+            for binding in bindings:
+                top_k = binding.top_k or 5
+                similarity_threshold = binding.similarity_threshold or 0.3
+                chunks = await KnowledgeService.retrieve_from_knowledge(
+                    db=db,
+                    knowledge_id=binding.knowledge_id,
+                    query_text=query_text,
+                    query_embedding=query_embedding,
+                    top_k=top_k,
+                    similarity_threshold=similarity_threshold,
+                )
+                logger.info(f"[RAG] binding knowledge_id={binding.knowledge_id}: {len(chunks)} chunks retrieved")
+                all_chunks.extend(chunks)
+
+        if not all_chunks:
+            logger.info("[RAG] No chunks retrieved from any knowledge base")
             return ""
-        
+
         # Sort by similarity and take top results
-        all_chunks = sorted(all_chunks, key=lambda x: x["similarity"], reverse=True)[:3]
-        
+        all_chunks = sorted(all_chunks, key=lambda x: x["similarity"], reverse=True)[:5]
+
         # Build context
         context = "以下是相关的知识库内容:\n\n"
         for i, chunk in enumerate(all_chunks, 1):
             context += f"来源: {chunk['filename']} (相似度: {chunk['similarity']:.2%})\n"
-            context += f"内容: {chunk['content'][:500]}...\n\n"
-        
+            context += f"内容: {chunk['content'][:800]}\n\n"
+
         return context

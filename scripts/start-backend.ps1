@@ -62,4 +62,4 @@ if ($RunMigrations) {
 }
 
 Write-Host "Starting backend with environment '$Environment'..."
-& $pythonExe -m uvicorn app.main:app --reload --port 8000
+& $pythonExe -m uvicorn app.main:app --reload --reload-dir app --port 8000

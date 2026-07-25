@@ -185,6 +185,7 @@ async def send_message(
     agent_config: dict = {}
     tools: list[dict] = []
     mcps: list[dict] = []
+    used_knowledge_bases: list[str] = []  # initialize before agent_id block
     if payload.agent_id:
         agent_resource = store.get_agent_resource_for_project(db, session.project_id, payload.agent_id)
         model_provider = agent_resource.model_provider
@@ -239,6 +240,59 @@ async def send_message(
             actor=user_id,
         )
         logger.info(f"[send_message] Loaded {len(mcps)} MCPs: {[m.get('name') for m in mcps]}")
+        
+        # RAG: Load and retrieve from knowledge bases
+        knowledge_base_ids = list(agent_config.get("knowledge_base_ids") or [])
+        rag_context = ""
+        used_knowledge_bases = []
+        
+        if knowledge_base_ids:
+            logger.info(f"[send_message] Agent has {len(knowledge_base_ids)} knowledge bases: {knowledge_base_ids}")
+            try:
+                # Generate embedding for user query (optional - text search fallback if fails)
+                query_embedding = None
+                try:
+                    emb_result = await KnowledgeService.get_embeddings(
+                        texts=[payload.text],
+                        model="embedding-3",
+                        embedding_provider="openai",
+                    )
+                    if emb_result and len(emb_result) > 0:
+                        query_embedding = emb_result[0]
+                except Exception as emb_err:
+                    logger.warning(f"[send_message] Embedding failed, using text search: {emb_err}")
+
+                # Build RAG context (vector search if embedding available, else text search)
+                rag_context = await KnowledgeService.build_rag_context(
+                    db=db,
+                    agent_id=payload.agent_id,
+                    query_text=payload.text,
+                    query_embedding=query_embedding,
+                    knowledge_base_ids=knowledge_base_ids,
+                )
+                
+                if rag_context.strip():
+                    logger.info(f"[send_message] RAG context retrieved: {len(rag_context)} chars")
+                    # Inject RAG context into system prompt
+                    kb_prompt = f"""
+You have access to the following knowledge base content relevant to the user's query:
+
+{rag_context}
+
+Use this information to provide accurate and informed responses. When relevant, cite the source documents."""
+                    
+                    if system_prompt:
+                        system_prompt = f"{system_prompt}\n\n{kb_prompt}"
+                    else:
+                        system_prompt = kb_prompt
+                    
+                    # Track which knowledge bases were used
+                    used_knowledge_bases = knowledge_base_ids
+                else:
+                    logger.info(f"[send_message] No relevant content found in knowledge bases for this query")
+            except Exception as e:
+                logger.warning(f"[send_message] Failed to retrieve RAG context: {str(e)}", exc_info=True)
+        
         store.append_runtime_run_event(
             db=db,
             run_id=run.id,
@@ -251,6 +305,7 @@ async def send_message(
                 "model_name": model_name,
                 "provider_connection_id": provider_connection_id,
                 "run_mode": run_mode,
+                "used_knowledge_bases": used_knowledge_bases,
             },
         )
     else:
@@ -623,6 +678,7 @@ async def send_message(
             run_id=run.id,
             used_tools=used_tools,
             used_mcps=used_mcps,
+            used_knowledge_bases=used_knowledge_bases,
         )
     except Exception as exc:
         error_text = str(exc)

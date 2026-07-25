@@ -81,6 +81,9 @@
                 mcp: {{ call.mcp }} / tool: {{ call.tool }}
               </Tag>
             </div>
+            <div v-if="item.used_knowledge_bases && item.used_knowledge_bases.length > 0" style="margin-bottom: 8px">
+              <Tag v-for="kb in item.used_knowledge_bases" :key="`kb-${kb}`" color="cyan">kb: {{ kb }}</Tag>
+            </div>
             <div class="markdown-content" v-html="renderMarkdown(item.text)" @click="onMarkdownClick"></div>
           </div>
         </TimelineItem>

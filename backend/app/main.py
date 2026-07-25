@@ -85,10 +85,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+logger.info(f"CORS enabled for origins: {settings.cors_allow_origins}")
+
 
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+@app.get("/test-cors")
+def test_cors() -> dict[str, str]:
+    return {"message": "CORS is working"}
+
+@app.post("/test-cors-post")
+def test_cors_post() -> dict[str, str]:
+    return {"message": "CORS POST is working"}
 
 
 app.include_router(api_router, prefix="/api")
