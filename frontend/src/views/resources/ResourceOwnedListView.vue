@@ -53,7 +53,7 @@
         </template>
         <template #action="{ row }">
           <Space>
-            <Button size="small" @click="openDetail(row)">Detail</Button>
+            <Button size="small" @click="openDetail(row)">{{ resourceKind === 'skill' ? 'Manage' : 'Detail' }}</Button>
             <Button
               v-if="resourceKind === 'knowledge_base'"
               size="small"
@@ -243,6 +243,13 @@ function goCreate() {
 }
 
 function openDetail(row) {
+  // For skills, navigate to the detail page to manage and upload
+  if (resourceKind.value === 'skill') {
+    router.push({ name: 'resources-skill-detail', params: { resourceId: row.id } });
+    return;
+  }
+  
+  // For other resources, show the detail drawer
   current.value = row;
   showDetail.value = true;
 }

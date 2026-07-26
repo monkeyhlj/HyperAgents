@@ -244,5 +244,114 @@ export const api = {
     return request(`/api/v1/knowledge/${knowledgeId}/reprocess`, {
       method: "POST"
     });
+  },
+
+  // ==================== Skills APIs ====================
+  
+  getSkill(skillId) {
+    return request(`/api/v1/skills/${skillId}`);
+  },
+
+  listProjectSkills(projectId, query = {}) {
+    return request(withQuery(`/api/v1/skills/projects/${projectId}/skills`, query));
+  },
+
+  uploadSkill(skillId, formData) {
+    const headers = { Authorization: "" };
+    if (authState.token) {
+      headers.Authorization = `Bearer ${authState.token}`;
+    }
+    return fetch(`${API_BASE_URL}/api/v1/skills/${skillId}/upload`, {
+      method: "POST",
+      body: formData,
+      headers: {
+        ...headers
+      }
+    }).then(async (response) => {
+      const text = await response.text();
+      let data = {};
+      try {
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        data = text ? { detail: text } : {};
+      }
+
+      if (!response.ok) {
+        const detail = data?.detail || `Request failed (${response.status})`;
+        const error = new Error(detail);
+        error.response = { data };
+        throw error;
+      }
+      return data;
+    });
+  },
+
+  uploadSkillFolder(skillId, formData) {
+    const headers = { Authorization: "" };
+    if (authState.token) {
+      headers.Authorization = `Bearer ${authState.token}`;
+    }
+    return fetch(`${API_BASE_URL}/api/v1/skills/${skillId}/upload-folder`, {
+      method: "POST",
+      body: formData,
+      headers: {
+        ...headers
+      }
+    }).then(async (response) => {
+      const text = await response.text();
+      let data = {};
+      try {
+        data = text ? JSON.parse(text) : {};
+      } catch {
+        data = text ? { detail: text } : {};
+      }
+
+      if (!response.ok) {
+        const detail = data?.detail || `Request failed (${response.status})`;
+        const error = new Error(detail);
+        error.response = { data };
+        throw error;
+      }
+      return data;
+    });
+  },
+
+  getSkillFileContent(skillId, filePath) {
+    return request(withQuery(`/api/v1/skills/${skillId}/files/content`, { path: filePath }));
+  },
+
+  testSkill(skillId, inputData) {
+    return request(`/api/v1/skills/${skillId}/test`, {
+      method: "POST",
+      body: JSON.stringify(inputData)
+    });
+  },
+
+  bindSkillToAgent(agentId, skillBinding) {
+    return request(`/api/v1/skills/agents/${agentId}/skills`, {
+      method: "POST",
+      body: JSON.stringify(skillBinding)
+    });
+  },
+
+  unbindSkillFromAgent(agentId, skillId) {
+    return request(`/api/v1/skills/agents/${agentId}/skills/${skillId}`, {
+      method: "DELETE"
+    });
+  },
+
+  listAgentBindings(agentId) {
+    return request(`/api/v1/skills/agents/${agentId}/skills`);
+  },
+
+  updateAgentSkillBinding(agentId, skillId, updates) {
+    return request(`/api/v1/skills/agents/${agentId}/skills/${skillId}`, {
+      method: "PATCH",
+      body: JSON.stringify(updates)
+    });
+  },
+
+  listSkillBindings(skillId) {
+    return request(`/api/v1/skills/${skillId}/agents`);
   }
 };

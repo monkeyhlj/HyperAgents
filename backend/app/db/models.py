@@ -355,3 +355,124 @@ class AgentKnowledgeBindingModel(Base):
     __table_args__ = (
         Index("ix_agent_knowledge_bindings_agent_knowledge", "agent_id", "knowledge_id", unique=True),
     )
+
+
+# ==================== Skills Models ====================
+
+class SkillMetadataModel(Base):
+    """Skill 元数据（扩展 Resource 对象）"""
+    __tablename__ = "skill_metadata"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    skill_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("resources.id", ondelete="CASCADE"), nullable=False, index=True, unique=True
+    )
+    project_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    
+    # 存储信息
+    storage_type: Mapped[str] = mapped_column(String(30), nullable=False)  # "local" | "git" | "s3"
+    repo_url: Mapped[str | None] = mapped_column(String(500), nullable=True)  # Git/S3 URL
+    repo_branch: Mapped[str] = mapped_column(String(100), default="main", nullable=False)
+    
+    # Skill 元数据（来自 SKILL.md frontmatter）
+    author: Mapped[str] = mapped_column(String(120), nullable=False)
+    version: Mapped[str] = mapped_column(String(30), nullable=False)  # semantic versioning
+    capabilities: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)  # 能力列表
+    requirements: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)  # 依赖字典
+    
+    # 入口点和 Schema
+    entrypoint: Mapped[str] = mapped_column(String(255), nullable=False)  # "scripts/main:execute"
+    input_schema: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)  # JSON Schema
+    output_schema: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)  # JSON Schema
+    
+    # SKILL.md 内容（Markdown 部分）
+    skill_md_content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    
+    # 状态
+    status: Mapped[str] = mapped_column(String(30), default="active", nullable=False)  # "active" | "inactive" | "deprecated"
+    
+    # 时间戳
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+    
+    __table_args__ = (
+        Index("ix_skill_metadata_project_status", "project_id", "status"),
+    )
+
+
+class AgentSkillBindingModel(Base):
+    """Agent 与 Skill 的绑定关系"""
+    __tablename__ = "agent_skill_bindings"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    agent_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("resources.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    skill_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("resources.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    project_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    
+    # 优先级和启用状态
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    priority: Mapped[int] = mapped_column(default=0, nullable=False)  # 越高越优先
+    
+    # 实例配置（覆盖 Skill 模板配置）
+    instance_config: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    
+    # 时间戳
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+    
+    __table_args__ = (
+        Index("ix_agent_skill_bindings_agent_skill", "agent_id", "skill_id", unique=True),
+    )
+
+
+class SkillExecutionModel(Base):
+    """Skill 执行记录"""
+    __tablename__ = "skill_executions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    skill_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("resources.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    agent_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("resources.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    project_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    session_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("chat_sessions.id", ondelete="SET NULL"), nullable=True
+    )
+    
+    # 执行状态
+    status: Mapped[str] = mapped_column(
+        String(30), default="pending", nullable=False, index=True
+    )  # "pending" | "running" | "completed" | "failed"
+    
+    # 输入和输出
+    input_data: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    output_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    
+    # 性能指标
+    execution_time_ms: Mapped[int | None] = mapped_column(nullable=True)
+    
+    # 时间戳
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    
+    __table_args__ = (
+        Index("ix_skill_executions_project_status", "project_id", "status"),
+    )

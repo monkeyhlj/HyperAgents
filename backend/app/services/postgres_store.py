@@ -23,6 +23,7 @@ from app.schemas.project import Project, ProjectUpdate
 from app.schemas.provider_connection import ProviderConnectionCreate, ProviderConnectionRecord, ProviderConnectionUpdate
 from app.schemas.resource import OwnedResource, Resource, ResourceUpdate
 from app.services.auth_utils import hash_password, verify_password
+from app.runtime.skill_service import delete_skill_artifacts
 from app.services.secret_box import decrypt_secret, encrypt_secret, mask_secret
 
 
@@ -569,8 +570,14 @@ class PostgresStore:
         if actor != project.owner_id and actor != resource.owner_id:
             raise HTTPException(status_code=403, detail="No permission to delete resource")
 
+        resource_kind = resource.kind
+        resource_key = resource.id
+
         db.delete(resource)
         db.commit()
+
+        if resource_kind == ResourceKind.SKILL.value:
+            delete_skill_artifacts(resource_key)
 
     def list_project_resources(
         self,

@@ -244,21 +244,25 @@ POST   /api/v1/knowledge/{id}/query               # 手动查询知识库
 │                    Skills System                             │
 ├──────────────────────────────────────────────────────────────┤
 │                                                              │
-│  Skill 文件夹结构：                                          │
+│  Skill 文件夹结构（Anthropic 标准）：                       │
 │  my-skill/                                                   │
-│  ├── skill.yaml              # 元数据定义                   │
-│  ├── README.md              # 文档                          │
-│  ├── src/                                                    │
+│  ├── SKILL.md               # 必需：元数据(frontmatter)    │
+│  │                          # + 指令说明(markdown)          │
+│  ├── scripts/               # 可选：可执行脚本             │
 │  │   ├── main.py           # 主要逻辑                      │
 │  │   ├── utils.py          # 工具函数                      │
 │  │   └── ...                                               │
-│  ├── config/                                                │
-│  │   └── default.json      # 配置示例                      │
-│  └── tests/                 # 单元测试                      │
-│      └── test_main.py                                       │
+│  ├── references/            # 可选：文档和资源             │
+│  │   ├── guide.md                                          │
+│  │   └── examples/                                         │
+│  ├── assets/                # 可选：模板、资源文件         │
+│  │   ├── templates/                                        │
+│  │   └── config/                                           │
+│  └── ...                    # 其他文件和目录               │
 │                                                              │
 │  Skill 定义遵循 Anthropic 标准：                             │
-│  - 统一的配置格式                                          │
+│  - SKILL.md 中的 YAML frontmatter 定义元数据               │
+│  - Markdown 正文包含详细指令                               │
 │  - 清晰的输入/输出 schema                                   │
 │  - 错误处理约定                                            │
 │                                                              │
@@ -286,7 +290,7 @@ class SkillResource(Resource):
     requirements: Dict[str, str]  # 依赖，例如 {"python": ">=3.9", "numpy": ">=1.20"}
     
     # 入口点
-    entrypoint: str  # "main:execute" 表示调用 src/main.py 的 execute 函数
+    entrypoint: str  # "scripts/main:execute" 表示调用 scripts/main.py 的 execute 函数
     
     # 配置 schema
     input_schema: Dict[str, Any]  # JSON Schema
@@ -320,8 +324,9 @@ class AgentSkillBinding(Base):
     updated_at: datetime
 ```
 
-**skill.yaml 示例：**
-```yaml
+**SKILL.md 示例：**
+```markdown
+---
 name: data-analyzer
 version: 1.0.0
 description: 数据分析和可视化 Skill
@@ -337,7 +342,7 @@ requirements:
   pandas: ">=1.5.0"
   matplotlib: ">=3.5.0"
 
-entrypoint: "main:execute"
+entrypoint: "scripts/main:execute"
 
 input_schema:
   type: object
@@ -364,6 +369,32 @@ output_schema:
       type: object
       description: "元数据（执行时间等）"
   required: ["result"]
+---
+
+# Data Analyzer Skill
+
+## Overview
+
+This skill performs statistical analysis and visualization on input data.
+
+## Usage
+
+### Basic Example
+
+```python
+from scripts.main import execute
+
+result = execute({
+    "data": [[1, 2, 3], [4, 5, 6]],
+    "operation": "summary"
+})
+```
+
+## Features
+
+- **Summary**: Generate statistical summary of data
+- **Correlation**: Calculate correlation matrix
+- **Visualization**: Create visualizations of data patterns
 ```
 
 #### 3.3 交互流程
@@ -372,18 +403,19 @@ output_schema:
 ```
 1. 在 Resources → Skills 创建新 Skill
    └─ 上传文件夹 或 输入 Git 仓库地址
-   └─ 系统自动解析 skill.yaml
+   └─ 系统自动解析 SKILL.md（frontmatter + 正文）
    └─ 验证入口点和 schema
    
 2. 查看 Skill 详情
-   ├─ README（文档）
-   ├─ 配置项列表
-   ├─ 入口参数说明（schema）
+   ├─ SKILL.md 正文（文档和使用说明）
+   ├─ 元数据和配置项列表
+   ├─ 入口参数说明（input_schema）
+   ├─ 输出格式说明（output_schema）
    ├─ 版本历史
    └─ 可用的 Agent 绑定
    
 3. 测试 Skill
-   └─ 提供测试输入 → 执行 → 查看输出
+   └─ 提供测试输入（符合 input_schema）→ 执行 → 查看输出
    
 4. 将 Skill 绑定到 Agent
    └─ Agent 编辑 → Skills 选项卡
@@ -395,15 +427,17 @@ output_schema:
 ```
 1. Skill 上传与解析
    ├─ 接收文件夹 & 解压
-   ├─ 解析 skill.yaml
+   ├─ 解析 SKILL.md 中的 frontmatter (YAML)
    ├─ 验证必要字段和 schema
+   ├─ 提取 markdown 正文作为文档
    ├─ 记录到数据库
    │
 2. Skill 执行（由 Agent 触发）
-   ├─ 加载 Skill 代码
-   ├─ 准备运行环境（虚拟环境 or 沙箱）
-   ├─ 校验输入参数
-   ├─ 执行入口函数
+   ├─ 加载 Skill 代码（从 scripts/ 目录）
+   ├─ 准备运行环境（虚拟环境 or 容器）
+   ├─ 校验输入参数（按 input_schema）
+   ├─ 执行入口函数（entrypoint）
+   ├─ 验证输出格式（按 output_schema）
    ├─ 捕获输出和异常
    └─ 返回结果 or 错误信息
    
@@ -411,6 +445,7 @@ output_schema:
    ├─ 支持多版本并行
    ├─ Agent 可以选择特定版本
    ├─ 自动保留历史版本
+   ├─ 灰度发布支持
 ```
 
 #### 3.4 API 端点
@@ -430,12 +465,15 @@ GET    /api/v1/agents/{id}/skills          # 列表
 
 #### 3.5 实现要点
 
-- **标准化格式**：严格遵循 Anthropic skill 定义（参考 [Anthropic Skills](https://github.com/anthropics/anthropic-sdk-python)）
-- **沙箱执行**：使用 Docker 容器或 Python 虚拟环境隔离 Skill 执行
-- **资源限制**：限制 CPU、内存、执行时间
-- **版本控制**：支持语义化版本，允许多版本共存
-- **依赖管理**：自动解析和安装 requirements
-- **错误处理**：统一的异常捕获和日志
+- **标准化格式**：严格遵循 Anthropic skill 定义，SKILL.md 为核心文件（frontmatter = 元数据，markdown = 文档）
+- **Frontmatter 解析**：使用 YAML frontmatter 解析 metadata（name, version, entrypoint, schemas 等）
+- **Markdown 文档**：SKILL.md 的正文用于展示给用户（使用说明、示例、特性等）
+- **沙箱执行**：使用 Docker 容器或 Python 虚拟环境隔离 Skill 执行，禁止文件系统和网络访问
+- **资源限制**：限制 CPU、内存、执行时间、最大文件句柄数
+- **版本控制**：支持语义化版本，允许多版本共存和并行运行
+- **依赖管理**：自动解析 requirements 并在隔离环境中安装
+- **Schema 验证**：入参和出参严格按 JSON Schema 验证
+- **错误处理**：统一的异常捕获、堆栈跟踪和日志记录
 
 #### 3.6 高级特性和优化
 
@@ -871,25 +909,56 @@ After completing the design of Agents, Tools, and MCPs, we now introduce three c
 #### 3.1 Architecture Design
 
 ```
-Skill Folder Structure:
+Skill Folder Structure (Anthropic Standard):
 my-skill/
-├── skill.yaml           # Metadata
-├── README.md           # Documentation
-├── src/
-│   ├── main.py        # Entry point
-│   └── utils.py
-├── config/
-│   └── default.json
-└── tests/
+├── SKILL.md             # Required: YAML frontmatter (metadata)
+│                        # + Markdown content (documentation & usage)
+├── scripts/             # Optional: Executable code
+│   ├── main.py         # Entry point function (main.py)
+│   ├── utils.py        # Helper functions
+│   └── ...
+├── references/          # Optional: Documentation & resources
+│   ├── guide.md
+│   └── examples/
+├── assets/              # Optional: Templates & configuration files
+│   ├── templates/
+│   └── config/
+└── ...                  # Other files and directories
+```
+
+**SKILL.md Structure:**
+```markdown
+---
+# YAML Frontmatter (Metadata)
+name: data-analyzer
+version: 1.0.0
+description: Data analysis and visualization skill
+author: HyperAgents Team
+entrypoint: "scripts/main:execute"
+input_schema: { ... }
+output_schema: { ... }
+requirements:
+  python: ">=3.9"
+  pandas: ">=1.5.0"
+---
+
+# Markdown Content (Documentation)
+## Overview
+...
+
+## Usage Examples
+...
 ```
 
 #### 3.2 Key Features
 
-- **Anthropic Standard**: Follows Anthropic skill definition format
-- **Schema Validation**: Input/output JSON schema validation
-- **Sandboxed Execution**: Docker or venv isolation
-- **Version Control**: Semantic versioning support
-- **Dependency Management**: Automatic pip install from requirements
+- **Anthropic Standard**: Uses SKILL.md with YAML frontmatter (metadata) + Markdown content (documentation)
+- **Frontmatter Parsing**: Extract metadata from YAML frontmatter in SKILL.md
+- **Markdown Documentation**: Display skill documentation to users
+- **Schema Validation**: Strict input/output JSON schema validation
+- **Sandboxed Execution**: Docker container or Python venv isolation with resource limits
+- **Version Control**: Semantic versioning with multi-version support
+- **Dependency Management**: Automatic requirement parsing and installation in isolated environment
 
 ### 4. Workflows (Agent to Agent Orchestration)
 

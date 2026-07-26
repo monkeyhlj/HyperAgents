@@ -89,6 +89,18 @@
               </template>
             </Alert>
 
+            <Alert v-if="isSkillKind" show-icon type="info" style="margin-bottom: 16px">
+              <template #desc>
+                <strong>🚀 Skill Creation Guide</strong>
+                <div style="margin-top: 8px; line-height: 1.6;">
+                  <div>1️⃣ Fill in the basic information (name, description, config)</div>
+                  <div>2️⃣ Click <strong>"Create"</strong> button below</div>
+                  <div>3️⃣ You'll be automatically redirected to the <strong>Skill Detail</strong> page</div>
+                  <div>4️⃣ Upload your Skill package (.zip with SKILL.md and scripts/) on that page</div>
+                </div>
+              </template>
+            </Alert>
+
             <Row v-if="isAgentKind" :gutter="16">
               <Col :xs="24" :md="12">
                 <FormItem label="Agent Run Mode">
@@ -605,6 +617,7 @@ const kind = computed(() => route.meta.kind || "agent");
 const isAgentKind = computed(() => kind.value === "agent");
 const isToolKind = computed(() => kind.value === "tool");
 const isMcpKind = computed(() => kind.value === "mcp");
+const isSkillKind = computed(() => kind.value === "skill");
 const isKnowledgeKind = computed(() => kind.value === "knowledge_base");
 const pageTitle = computed(() => route.meta.title || "Create Resource");
 const backRoute = computed(() => route.meta.backRoute || "resources-overview");
@@ -1263,6 +1276,10 @@ async function submitForm() {
       if (isKnowledgeKind.value && createdResourceId) {
         setTimeout(() => {
           router.push({ name: "resources-knowledge-bases-detail", params: { resourceId: createdResourceId } });
+        }, 1000);
+      } else if (isSkillKind.value && createdResourceId) {
+        setTimeout(() => {
+          router.push({ name: "resources-skill-detail", params: { resourceId: createdResourceId } });
         }, 1000);
       } else {
         goBack();

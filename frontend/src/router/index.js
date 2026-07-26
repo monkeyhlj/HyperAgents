@@ -153,6 +153,19 @@ const routes = [
     }
   },
   {
+    path: "/resources/skills/:resourceId",
+    redirect: { name: "resources-skill-detail" }
+  },
+  {
+    path: "/resources/skills/:resourceId/detail",
+    name: "resources-skill-detail",
+    component: () => import("../views/resources/SkillDetailView.vue"),
+    meta: {
+      requiresAuth: true,
+      title: "Skill Details"
+    }
+  },
+  {
     path: "/workflows",
     name: "workflows",
     component: () => import("../views/resources/ResourceOwnedListView.vue"),
