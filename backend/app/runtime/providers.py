@@ -21,6 +21,7 @@ class ProviderGenerationRequest:
     messages: list[dict] | None = None
     # OpenAI-format tool definitions for function calling.
     tools: list[dict] | None = None
+    max_tokens: int | None = None
 
 
 @dataclass
@@ -125,6 +126,8 @@ class OpenAIProviderClient(ProviderClient):
             messages.append({"role": "user", "content": request.text})
 
         kwargs: dict = {"model": request.model_name, "messages": messages, "temperature": 0.2}
+        if request.max_tokens is not None:
+            kwargs["max_tokens"] = request.max_tokens
         if request.tools:
             kwargs["tools"] = request.tools
             kwargs["tool_choice"] = "auto"
@@ -158,6 +161,8 @@ class LocalhostProviderClient(ProviderClient):
             messages.append({"role": "user", "content": request.text})
 
         payload: dict = {"model": request.model_name, "messages": messages, "temperature": 0.2}
+        if request.max_tokens is not None:
+            payload["max_tokens"] = request.max_tokens
         if request.tools:
             payload["tools"] = request.tools
             payload["tool_choice"] = "auto"

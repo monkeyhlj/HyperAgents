@@ -23,6 +23,8 @@ class LLMRequest:
     messages: list[dict] | None = None
     # OpenAI-format tool definitions for function calling.
     tools: list[dict] | None = None
+    # Optional output cap to keep long-running design calls from timing out.
+    max_tokens: int | None = None
 
 
 @dataclass
@@ -64,6 +66,8 @@ class LLMService:
                         _messages = [{"role": "system", "content": request.system_prompt}]
                     _messages = [*_messages, {"role": "user", "content": request.text}]
                 _kwargs: dict = {"model": resolved_model, "messages": _messages, "temperature": 0.2}
+                if request.max_tokens is not None:
+                    _kwargs["max_tokens"] = request.max_tokens
                 if request.tools:
                     _kwargs["tools"] = request.tools
                     _kwargs["tool_choice"] = "auto"
@@ -95,6 +99,7 @@ class LLMService:
                     system_prompt=request.system_prompt,
                     messages=request.messages,
                     tools=request.tools,
+                    max_tokens=request.max_tokens,
                 )
             )
             return LLMResponse(

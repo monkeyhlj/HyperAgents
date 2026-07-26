@@ -1,4 +1,5 @@
 from datetime import datetime
+import re
 from uuid import uuid4
 
 from fastapi import HTTPException
@@ -6,6 +7,7 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from app.db.models import (
+    AgentSkillBindingModel,
     ChatMessageModel,
     ChatSessionModel,
     ProjectMemberPermissionModel,
@@ -15,6 +17,7 @@ from app.db.models import (
     ResourceModel,
     RuntimeRunEventModel,
     RuntimeRunModel,
+    SkillMetadataModel,
     UserModel,
 )
 from app.models.enums import ResourceKind, Visibility
@@ -50,6 +53,26 @@ class PostgresStore:
             normalized_config.pop(key, None)
 
         return None, None, None, normalized_config
+
+    @staticmethod
+    def _extract_skill_purpose(description: str, skill_md_content: str | None) -> str:
+        if description and description.strip():
+            return description.strip()
+
+        if not skill_md_content:
+            return ""
+
+        # Use first meaningful markdown line as a concise purpose hint.
+        for raw_line in skill_md_content.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            if line.startswith("#"):
+                continue
+            cleaned = re.sub(r"^[\-\*\d\.\s]+", "", line).strip()
+            if cleaned:
+                return cleaned[:160]
+        return ""
 
     def create_user(
         self,
@@ -985,6 +1008,103 @@ class PostgresStore:
                     "timeout_seconds": config.get("timeout_seconds") or 8,
                 }
             )
+        return result
+
+    def list_skill_resources_for_project(
+        self,
+        db: Session,
+        project_id: str,
+        skill_ids: list[str],
+        actor: str,
+    ) -> list[dict]:
+        if not skill_ids:
+            return []
+
+        self.assert_project_member(db, project_id, actor)
+        result: list[dict] = []
+
+        for skill_id in skill_ids:
+            resource = db.get(ResourceModel, skill_id)
+            if not resource or resource.project_id != project_id:
+                continue
+            if resource.kind != ResourceKind.SKILL.value:
+                continue
+
+            visibility = Visibility(resource.visibility)
+            if visibility == Visibility.PRIVATE and resource.owner_id != actor:
+                continue
+
+            metadata = db.scalar(
+                select(SkillMetadataModel).where(SkillMetadataModel.skill_id == skill_id)
+            )
+
+            result.append(
+                {
+                    "skill_id": resource.id,
+                    "name": resource.name,
+                    "description": resource.description or "",
+                    "purpose": self._extract_skill_purpose(resource.description or "", metadata.skill_md_content if metadata else None),
+                    "priority": 0,
+                    "enabled": True,
+                    "version": metadata.version if metadata else "",
+                    "entrypoint": metadata.entrypoint if metadata else "",
+                    "capabilities": list(metadata.capabilities or []) if metadata else [],
+                    "status": metadata.status if metadata else "",
+                    "skill_md_content": metadata.skill_md_content if metadata else "",
+                }
+            )
+
+        return result
+
+    def list_skill_resources_for_agent(
+        self,
+        db: Session,
+        project_id: str,
+        agent_id: str,
+        actor: str,
+    ) -> list[dict]:
+        self.assert_project_member(db, project_id, actor)
+
+        bindings = db.scalars(
+            select(AgentSkillBindingModel)
+            .where(
+                AgentSkillBindingModel.project_id == project_id,
+                AgentSkillBindingModel.agent_id == agent_id,
+                AgentSkillBindingModel.enabled.is_(True),
+            )
+            .order_by(AgentSkillBindingModel.priority.desc())
+        ).all()
+
+        result: list[dict] = []
+        for binding in bindings:
+            resource = db.get(ResourceModel, binding.skill_id)
+            if not resource or resource.kind != ResourceKind.SKILL.value:
+                continue
+
+            visibility = Visibility(resource.visibility)
+            if visibility == Visibility.PRIVATE and resource.owner_id != actor:
+                continue
+
+            metadata = db.scalar(
+                select(SkillMetadataModel).where(SkillMetadataModel.skill_id == binding.skill_id)
+            )
+
+            result.append(
+                {
+                    "skill_id": resource.id,
+                    "name": resource.name,
+                    "description": resource.description or "",
+                    "purpose": self._extract_skill_purpose(resource.description or "", metadata.skill_md_content if metadata else None),
+                    "priority": binding.priority,
+                    "enabled": binding.enabled,
+                    "version": metadata.version if metadata else "",
+                    "entrypoint": metadata.entrypoint if metadata else "",
+                    "capabilities": list(metadata.capabilities or []) if metadata else [],
+                    "status": metadata.status if metadata else "",
+                    "skill_md_content": metadata.skill_md_content if metadata else "",
+                }
+            )
+
         return result
 
     def _get_provider_connection_model(

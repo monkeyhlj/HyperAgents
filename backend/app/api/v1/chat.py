@@ -1,5 +1,7 @@
 import json
 import logging
+import re
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
@@ -27,9 +29,174 @@ from app.schemas.resource import (
     RuntimeRunRecord,
 )
 from app.services.postgres_store import store
+from app.services.user_file_service import user_file_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _is_skill_listing_query(text: str) -> bool:
+    normalized = (text or "").strip().lower()
+    patterns = [
+        r"有哪些\s*skills?",
+        r"有哪?些\s*skill",
+        r"what\s+skills?\s+do\s+you\s+have",
+        r"list\s+.*skills?",
+        r"当前\s*skills?",
+    ]
+    return any(re.search(pattern, normalized, flags=re.IGNORECASE) for pattern in patterns)
+
+
+def _render_bound_skills(bound_skills: list[dict]) -> str:
+    if not bound_skills:
+        return "当前没有绑定任何 Skill。"
+
+    lines = ["当前我已绑定并可用的 Skills："]
+    for idx, skill in enumerate(bound_skills, start=1):
+        name = skill.get("name") or skill.get("skill_id")
+        version = skill.get("version") or "-"
+        entrypoint = skill.get("entrypoint") or "-"
+        desc = skill.get("description") or ""
+        purpose = skill.get("purpose") or desc or "未提供"
+        capabilities = skill.get("capabilities") or []
+        caps_text = "、".join(str(item) for item in capabilities[:6]) if capabilities else "-"
+        lines.append(f"{idx}. {name}")
+        lines.append(f"   - 用途: {purpose}")
+        lines.append(f"   - version: {version}")
+        lines.append(f"   - entrypoint: {entrypoint}")
+        lines.append(f"   - capabilities: {caps_text}")
+        if desc:
+            lines.append(f"   - description: {desc}")
+
+    lines.append("如你希望我调用某个 Skill，请直接说“使用 <Skill 名称> 来处理 …”，我会在回复中标注使用的 Skill。")
+    return "\n".join(lines)
+
+
+def _extract_mentioned_skills(text: str, bound_skills: list[dict]) -> list[str]:
+    normalized = (text or "").lower()
+    result: list[str] = []
+    for item in bound_skills:
+        name = str(item.get("name") or "").strip()
+        if name and name.lower() in normalized:
+            result.append(name)
+    return list(dict.fromkeys(result))
+
+
+def _has_skill_name(bound_skills: list[dict], skill_names: set[str]) -> bool:
+    for item in bound_skills:
+        name = str(item.get("name") or "").strip().lower()
+        if name in skill_names:
+            return True
+    return False
+
+
+def _looks_truncated_design_output(answer: str) -> bool:
+    text = (answer or "").rstrip()
+    if not text:
+        return False
+
+    lowered = text.lower()
+    if text.count("```") % 2 == 1:
+        return True
+    if "<html" in lowered and "</html>" not in lowered:
+        return True
+    if "<style" in lowered and "</style>" not in lowered:
+        return True
+
+    truncated_endings = (
+        "transform:",
+        "background:",
+        "color:",
+        "padding:",
+        "margin:",
+        "width:",
+        "height:",
+        "top:",
+        "left:",
+        "right:",
+        "bottom:",
+        "opacity:",
+        "font-size:",
+        "line-height:",
+        "{",
+        ":",
+        "=",
+    )
+    return any(text.endswith(item) for item in truncated_endings)
+
+
+def _is_design_skill(bound_skills: list[dict]) -> bool:
+    return _has_skill_name(bound_skills, {"frontend-design", "front-design"})
+
+
+def _repair_truncated_design_output(answer: str) -> str:
+    text = (answer or "").rstrip()
+    if not text:
+        return text
+
+    if "\n" in text:
+        text = text.rsplit("\n", 1)[0].rstrip()
+
+    lowered = text.lower()
+    suffix_parts: list[str] = []
+    if "<style" in lowered and "</style>" not in lowered:
+        suffix_parts.append("}")
+        suffix_parts.append("</style>")
+    if "<body" in lowered and "</body>" not in lowered:
+        suffix_parts.append("</body>")
+    if "<html" in lowered and "</html>" not in lowered:
+        suffix_parts.append("</html>")
+    if text.count("```") % 2 == 1:
+        suffix_parts.append("```")
+
+    if suffix_parts:
+        text = f"{text}\n" + "\n".join(suffix_parts)
+    return text
+
+
+def _build_design_skill_brief(user_text: str, bound_skills: list[dict]) -> str:
+    subject = "高端卖酒网站首页"
+    if user_text.strip():
+        subject = user_text.strip()
+
+    brief = [
+        "Design a luxury alcohol brand homepage for: " + subject,
+        "Use the official frontend-design skill principles internally: make the hero the thesis, ground the page in the subject's world, use deliberate typography, make structure meaningful, and spend boldness in one memorable signature element.",
+        "Return only the finished HTML/CSS page. Do not output a design plan, critique, heading, bullet list, or commentary outside the code.",
+        "The page must be one complete single-file landing page with these visible sections in order: 1) cinematic hero, 2) featured collection/product showcase, 3) brand story/origin, 4) tasting/ritual, 5) final CTA/footer.",
+        "The hero must dominate the page; the nav is only a small overlay or slim header, not the main content.",
+        "Use a premium visual language: dark velvet base, gold accents, glassy panels, burgundy or amber highlights, and one signature composition such as a bottle silhouette, cellar arch, or tasting-note ring.",
+        "Avoid template behavior: no nav-only draft, no multiple options, no filler explanation, and no unfinished code blocks.",
+    ]
+
+    brief.append(
+        "If you need interior structure, make the first screen feel like a magazine cover and the rest like a curated editorial story."
+    )
+
+    return "\n\n".join(brief)
+
+
+def _extract_generated_files_payload(answer: str) -> list[dict]:
+    text = (answer or "").strip()
+    if not text:
+        return []
+
+    try:
+        payload = json.loads(text)
+        if isinstance(payload, dict) and isinstance(payload.get("generated_files"), list):
+            return payload["generated_files"]
+    except Exception:
+        pass
+
+    match = re.search(r"```json\s*(\{[\s\S]*?\})\s*```", text, flags=re.IGNORECASE)
+    if match:
+        try:
+            payload = json.loads(match.group(1))
+            if isinstance(payload, dict) and isinstance(payload.get("generated_files"), list):
+                return payload["generated_files"]
+        except Exception:
+            return []
+    return []
 
 
 def _decode_code_result(code_result: dict | str) -> tuple[str, list[str], list[dict[str, str]], bool]:
@@ -185,6 +352,7 @@ async def send_message(
     agent_config: dict = {}
     tools: list[dict] = []
     mcps: list[dict] = []
+    bound_skills: list[dict] = []
     used_knowledge_bases: list[str] = []  # initialize before agent_id block
     if payload.agent_id:
         agent_resource = store.get_agent_resource_for_project(db, session.project_id, payload.agent_id)
@@ -240,6 +408,53 @@ async def send_message(
             actor=user_id,
         )
         logger.info(f"[send_message] Loaded {len(mcps)} MCPs: {[m.get('name') for m in mcps]}")
+
+        bound_skills = store.list_skill_resources_for_agent(
+            db,
+            project_id=session.project_id,
+            agent_id=payload.agent_id,
+            actor=user_id,
+        )
+
+        config_skill_ids = [str(item) for item in (agent_config.get("skill_ids") or []) if item]
+        config_skills = store.list_skill_resources_for_project(
+            db,
+            project_id=session.project_id,
+            skill_ids=config_skill_ids,
+            actor=user_id,
+        )
+
+        merged: dict[str, dict] = {}
+        for item in bound_skills + config_skills:
+            skill_key = str(item.get("skill_id") or "")
+            if not skill_key:
+                continue
+            if skill_key not in merged:
+                merged[skill_key] = item
+        bound_skills = list(merged.values())
+        logger.info(
+            f"[send_message] Loaded {len(bound_skills)} bound skills: "
+            f"{[s.get('name') for s in bound_skills]}"
+        )
+
+        if bound_skills:
+            skill_lines = []
+            for item in bound_skills:
+                skill_lines.append(
+                    f"- {item.get('name')} (version={item.get('version') or '-'}, capabilities={item.get('capabilities') or []})"
+                )
+            skill_prompt = (
+                "You have the following bound skills for this agent:\n"
+                + "\n".join(skill_lines)
+                + "\nWhen a user asks about available skills, answer from this exact list only. "
+                  "When you use one of these skills in your reasoning, include a final line: '使用的 Skill: <skill name>'."
+            )
+            if _is_design_skill(bound_skills):
+                skill_prompt += "\n" + _build_design_skill_brief(payload.text, bound_skills)
+            if system_prompt:
+                system_prompt = f"{system_prompt}\n\n{skill_prompt}"
+            else:
+                system_prompt = skill_prompt
         
         # RAG: Load and retrieve from knowledge bases
         knowledge_base_ids = list(agent_config.get("knowledge_base_ids") or [])
@@ -325,7 +540,23 @@ Use this information to provide accurate and informed responses. When relevant, 
         store.append_chat_message(db, session_id, role="user", text=payload.text)
         used_tools: list[str] = []
         used_mcps: list[dict[str, str]] = []
-        if run_mode == "code":
+        used_skills: list[str] = []
+
+        is_skill_inventory_query = bool(bound_skills and _is_skill_listing_query(payload.text))
+        mentioned_skills = _extract_mentioned_skills(payload.text, bound_skills) if bound_skills else []
+
+        if is_skill_inventory_query:
+            answer = _render_bound_skills(bound_skills)
+            used_skills = [str(item.get("name") or item.get("skill_id")) for item in bound_skills]
+            store.append_runtime_run_event(
+                db=db,
+                run_id=run.id,
+                stage="skill",
+                status="succeeded",
+                message="Returned bound skill inventory",
+                payload={"skills": used_skills},
+            )
+        elif run_mode == "code":
             started = perf_counter()
             preview = payload.text[:200]
             store.append_runtime_run_event(
@@ -362,6 +593,7 @@ Use this information to provide accurate and informed responses. When relevant, 
                             provider_connection_id=provider_connection_id,
                             provider_connection=provider_connection,
                             system_prompt=system_prompt,
+                            max_tokens=900 if _is_design_skill(bound_skills) else None,
                         )
                     )
                     answer = llm_response.text
@@ -437,8 +669,13 @@ Use this information to provide accurate and informed responses. When relevant, 
                     agent_context = {
                         "mcps": {m.get("id"): m for m in mcps},
                         "tools": {t.get("id"): t for t in tools},
-                        "skills": {},  # TODO: Phase 2
+                        "skills": {s.get("skill_id"): s for s in bound_skills},
                         "knowledge_bases": {},  # TODO: Phase 2
+                    }
+
+                    agent_config = {
+                        **agent_config,
+                        "skill_ids": [s.get("skill_id") for s in bound_skills],
                     }
                     
                     # Run agent
@@ -577,6 +814,7 @@ Use this information to provide accurate and informed responses. When relevant, 
                                 system_prompt=system_prompt,
                                 messages=conv_messages,
                                 tools=openai_tools if openai_tools else None,
+                                max_tokens=900 if _is_design_skill(bound_skills) else None,
                             )
                         )
                         
@@ -655,6 +893,93 @@ Use this information to provide accurate and informed responses. When relevant, 
                         "mcp_calls": len(used_mcps),
                     },
                 )
+        generated_files = _extract_generated_files_payload(answer)
+
+        if _is_design_skill(bound_skills) and not answer.startswith("[runtime-fallback:"):
+            for continuation_index in range(2):
+                if not _looks_truncated_design_output(answer):
+                    break
+
+                continuation_prompt = (
+                    "Continue the previous design/code output from the exact point it stopped. "
+                    "Do not repeat earlier content. Finish any open HTML/CSS/JS blocks and close all tags/fences. "
+                    "Output only the continuation.\n\n"
+                    f"Previous output:\n{answer}\n\nContinuation:"
+                )
+                continuation = llm_service.generate(
+                    LLMRequest(
+                        text=continuation_prompt,
+                        model_provider=model_provider,
+                        model_name=model_name,
+                        provider_profile=provider_profile,
+                        provider_connection_id=provider_connection_id,
+                        provider_connection=provider_connection,
+                        system_prompt=system_prompt,
+                        max_tokens=900,
+                    )
+                )
+                if not continuation.ok or not continuation.text:
+                    break
+
+                answer = f"{answer}{continuation.text.lstrip()}"
+                store.append_runtime_run_event(
+                    db=db,
+                    run_id=run.id,
+                    stage="llm_continuation",
+                    status="succeeded",
+                    message=f"Continued truncated design output (pass {continuation_index + 1})",
+                    payload={"continuation_length": len(continuation.text)},
+                )
+
+            if _looks_truncated_design_output(answer):
+                repaired_answer = _repair_truncated_design_output(answer)
+                if repaired_answer != answer:
+                    answer = repaired_answer
+                    store.append_runtime_run_event(
+                        db=db,
+                        run_id=run.id,
+                        stage="llm_repair",
+                        status="succeeded",
+                        message="Repaired truncated design output",
+                        payload={"repaired_length": len(answer)},
+                    )
+
+        if not used_skills and mentioned_skills:
+            used_skills = mentioned_skills
+        if used_skills and not is_skill_inventory_query and "使用的 Skill:" not in answer and not _is_design_skill(bound_skills):
+            answer = f"{answer}\n\n使用的 Skill: {', '.join(used_skills)}"
+
+        if used_skills and not is_skill_inventory_query:
+            try:
+                timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+                safe_skill_name = re.sub(r"[^\w\-]+", "_", used_skills[0]) if used_skills else "skill"
+                summary_path = f"chat_outputs/{safe_skill_name}_{timestamp}.md"
+                user_file_service.save_text_file(user_id, summary_path, answer)
+
+                if generated_files:
+                    saved = user_file_service.save_generated_files(
+                        user_id=user_id,
+                        base_dir=f"generated/{safe_skill_name}_{timestamp}",
+                        generated_files=generated_files,
+                    )
+                    store.append_runtime_run_event(
+                        db=db,
+                        run_id=run.id,
+                        stage="file_library",
+                        status="succeeded",
+                        message="Saved generated files to user file library",
+                        payload={"files": saved},
+                    )
+            except Exception as file_exc:
+                store.append_runtime_run_event(
+                    db=db,
+                    run_id=run.id,
+                    stage="file_library",
+                    status="failed",
+                    message="Failed to persist file library artifacts",
+                    payload={"error": str(file_exc)},
+                )
+
         store.append_chat_message(db, session_id, role="assistant", text=answer)
         store.finish_runtime_run(
             db=db,
@@ -679,6 +1004,7 @@ Use this information to provide accurate and informed responses. When relevant, 
             used_tools=used_tools,
             used_mcps=used_mcps,
             used_knowledge_bases=used_knowledge_bases,
+            used_skills=used_skills,
         )
     except Exception as exc:
         error_text = str(exc)

@@ -84,6 +84,7 @@ class ChatMessageResponse(BaseModel):
     used_tools: list[str] = []
     used_mcps: list[dict[str, str]] = []
     used_knowledge_bases: list[str] = []
+    used_skills: list[str] = []
 
 
 class ChatSessionRecord(BaseModel):

@@ -205,6 +205,12 @@ const routes = [
     name: "workbench",
     component: () => import("../views/WorkbenchView.vue"),
     meta: { requiresAuth: true }
+  },
+  {
+    path: "/my-files",
+    name: "my-files",
+    component: () => import("../views/MyFilesView.vue"),
+    meta: { requiresAuth: true, title: "My Files" }
   }
 ];
 

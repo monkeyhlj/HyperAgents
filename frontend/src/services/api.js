@@ -1,20 +1,15 @@
 import { API_BASE_URL } from "../config";
 import { authState } from "../stores/auth";
 
-function buildHeaders(extraHeaders = {}) {
-  const headers = { "Content-Type": "application/json", ...extraHeaders };
+function buildHeaders(extraHeaders = {}, includeContentType = true) {
+  const headers = includeContentType ? { "Content-Type": "application/json", ...extraHeaders } : { ...extraHeaders };
   if (authState.token) {
     headers.Authorization = `Bearer ${authState.token}`;
   }
   return headers;
 }
 
-export async function request(path, options = {}) {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...options,
-    headers: buildHeaders(options.headers || {})
-  });
-
+async function parseResponse(response) {
   const text = await response.text();
   let data = {};
   try {
@@ -28,6 +23,15 @@ export async function request(path, options = {}) {
     throw new Error(detail);
   }
   return data;
+}
+
+export async function request(path, options = {}) {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...options,
+    headers: buildHeaders(options.headers || {})
+  });
+
+  return parseResponse(response);
 }
 
 function withQuery(path, query = {}) {
@@ -119,6 +123,36 @@ export const api = {
   },
   listCodeExecutionAudits(query = {}) {
     return request(withQuery("/api/v1/chat/code-execution-audits", query));
+  },
+  listMyFiles() {
+    return request("/api/v1/files/me");
+  },
+  downloadMyFile(filePath) {
+    const headers = {};
+    if (authState.token) {
+      headers.Authorization = `Bearer ${authState.token}`;
+    }
+    return fetch(`${API_BASE_URL}${withQuery("/api/v1/files/me/download", { path: filePath })}`, {
+      method: "GET",
+      headers,
+    });
+  },
+  async uploadMyFiles(files, targetDir = "") {
+    const formData = new FormData();
+    files.forEach((file) => {
+      formData.append("files", file, file.webkitRelativePath || file.name);
+    });
+    if (targetDir) {
+      formData.append("target_dir", targetDir);
+    }
+
+    const headers = buildHeaders({}, false);
+    const response = await fetch(`${API_BASE_URL}/api/v1/files/me/upload`, {
+      method: "POST",
+      headers,
+      body: formData,
+    });
+    return parseResponse(response);
   },
   probeMcp(payload) {
     return request("/api/v1/registry/mcp/probe", {

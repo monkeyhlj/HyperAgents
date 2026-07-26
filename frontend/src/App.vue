@@ -44,6 +44,10 @@
               <Icon type="ios-flask" />
               <span>Workbench</span>
             </MenuItem>
+            <MenuItem name="my-files" @click="goTo('/my-files')">
+              <Icon type="ios-folder" />
+              <span>My Files</span>
+            </MenuItem>
           </Menu>
         </Sider>
 
@@ -77,6 +81,7 @@ const activeMenu = computed(() => {
   if (route.path.startsWith("/resources")) return "resources-overview";
   if (route.path.startsWith("/workflows")) return "workflows";
   if (route.path.startsWith("/workbench")) return "workbench";
+  if (route.path.startsWith("/my-files")) return "my-files";
   return "dashboard";
 });
 
