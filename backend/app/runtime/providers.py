@@ -202,6 +202,8 @@ class ProviderFactory:
         if normalized in {"nvidia", "nvida"}:
             # NVIDIA uses OpenAI-compatible API, so use OpenAIProviderClient
             return OpenAIProviderClient(profile_name=provider_profile or "nvidia")
+        if normalized == "deepseek":
+            return OpenAIProviderClient(profile_name=provider_profile or "deepseek")
         if normalized == "zhipu":
             return OpenAIProviderClient(profile_name=provider_profile or "zhipu")
         # Default to OpenAI-compatible client

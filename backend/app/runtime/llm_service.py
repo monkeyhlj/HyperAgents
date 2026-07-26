@@ -141,30 +141,33 @@ class LLMService:
     ) -> str:
         if provider_connection and provider_connection.get("default_model"):
             return str(provider_connection["default_model"])
-        
+
+        candidates: list[str] = []
         if provider_profile:
-            # Normalize profile name to env var prefix (e.g., "custom-nvidia" -> "CUSTOM_NVIDIA")
-            profile_name = re.sub(r"[^A-Za-z0-9]+", "_", provider_profile.strip()).strip("_").upper()
-            env_value = os.getenv(f"{profile_name}_DEFAULT_MODEL")
+            candidates.append(provider_profile)
+        if provider_name:
+            candidates.append(provider_name)
+
+        for candidate in candidates:
+            prefix = re.sub(r"[^A-Za-z0-9]+", "_", candidate.strip()).strip("_").upper()
+            env_value = os.getenv(f"{prefix}_DEFAULT_MODEL")
             if env_value:
                 return env_value
-            
-            # Backward compatibility for NVIDIA/NVIDA spellings
-            if provider_profile.lower() in {"nvidia", "nvida"}:
+
+            # Backward compatibility for NVIDIA/NVIDA spellings.
+            if candidate.lower() in {"nvidia", "nvida"}:
                 env_value = os.getenv("NVIDA_DEFAULT_MODEL") or os.getenv("NVIDIA_DEFAULT_MODEL")
                 if env_value:
                     return env_value
                 return "z-ai/glm-5.2"
-        
-        # Provider-level fallback
+
         if provider_name.strip().lower() == "openai":
             return settings.openai_default_model
+        if provider_name.strip().lower() == "deepseek":
+            return settings.deepseek_default_model
         if provider_name.strip().lower() in {"nvidia", "nvida"}:
-            # NVIDIA fallback
-            env_value = os.getenv("NVIDA_DEFAULT_MODEL") or os.getenv("NVIDIA_DEFAULT_MODEL")
-            return env_value or "z-ai/glm-5.2"
-        
-        # Default to localhost
+            return os.getenv("NVIDA_DEFAULT_MODEL") or os.getenv("NVIDIA_DEFAULT_MODEL") or "z-ai/glm-5.2"
+
         return settings.localhost_default_model
 
 

@@ -1,4 +1,4 @@
-from app.runtime.llm_service import LLMRequest, llm_service
+from app.runtime.llm_service import LLMRequest, LLMResponse, llm_service
 
 
 class _FakeClient:
@@ -9,7 +9,7 @@ class _FakeClient:
     def generate(self, request):
         if self._should_fail:
             raise RuntimeError("boom")
-        return f"{self._text}:{request.model_name}"
+        return LLMResponse(text=f"{self._text}:{request.model_name}", provider="test", model_name=request.model_name)
 
 
 def test_llm_service_success(monkeypatch) -> None:
@@ -54,6 +54,25 @@ def test_llm_service_fallback(monkeypatch) -> None:
     assert response.provider == "openai"
     assert response.model_name == "demo-model"
     assert "[runtime-fallback:openai]" in response.text
+
+
+def test_llm_service_uses_deepseek_default_model_from_env(monkeypatch) -> None:
+    monkeypatch.setenv("DEEPSEEK_DEFAULT_MODEL", "deepseek-v4-flash")
+    monkeypatch.setattr(
+        "app.runtime.llm_service.provider_factory.get_client",
+        lambda provider_name, provider_profile=None: _FakeClient("ok"),
+    )
+
+    response = llm_service.generate(
+        LLMRequest(
+            text="hello",
+            model_provider="deepseek",
+            provider_profile=None,
+        )
+    )
+
+    assert response.text == "ok:deepseek-v4-flash"
+    assert response.model_name == "deepseek-v4-flash"
 
 
 def test_code_requests_llm_true_for_json_signal() -> None:
