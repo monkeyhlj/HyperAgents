@@ -43,6 +43,8 @@ def _is_skill_listing_query(text: str) -> bool:
         r"what\s+skills?\s+do\s+you\s+have",
         r"list\s+.*skills?",
         r"当前\s*skills?",
+        r"有什么\s*skills?",
+        r"现在\s*.*\s*什么\s*skills?",
     ]
     return any(re.search(pattern, normalized, flags=re.IGNORECASE) for pattern in patterns)
 
@@ -81,6 +83,131 @@ def _extract_mentioned_skills(text: str, bound_skills: list[dict]) -> list[str]:
             result.append(name)
     return list(dict.fromkeys(result))
 
+
+
+
+def _llm_answer_or_error(llm_response) -> str:
+    if llm_response and llm_response.text:
+        return llm_response.text
+    error = getattr(llm_response, "error", None) if llm_response else "empty LLM response"
+    return f"[LLM Error] {error or 'empty LLM response'}"
+
+def _skill_display_name(skill: dict) -> str:
+    return str(skill.get("name") or skill.get("skill_id") or "skill").strip()
+
+
+def _skill_match_haystack(skill: dict) -> str:
+    parts = [
+        skill.get("name") or "",
+        skill.get("description") or "",
+        skill.get("purpose") or "",
+        " ".join(str(item) for item in (skill.get("capabilities") or [])),
+    ]
+    return " ".join(str(part) for part in parts if part).lower()
+
+
+def _skill_matches_request(skill: dict, user_text: str) -> bool:
+    normalized = (user_text or "").strip().lower()
+    if not normalized:
+        return False
+
+    name = _skill_display_name(skill).lower()
+    if name and name in normalized:
+        return True
+
+    for capability in skill.get("capabilities") or []:
+        capability_text = str(capability).strip().lower()
+        if capability_text and capability_text in normalized:
+            return True
+
+    haystack = _skill_match_haystack(skill)
+    for token in re.split(r"[\s,，。；;、/|()（）\[\]{}:：]+", normalized):
+        token = token.strip()
+        if len(token) >= 3 and token in haystack:
+            return True
+
+    # Chinese task phrases are often not whitespace-delimited. Use concise
+    # purpose/description phrases as substring hints for activation.
+    for source in (skill.get("purpose") or "", skill.get("description") or ""):
+        for phrase in re.split(r"[，。；;、\n\r]+", str(source).lower()):
+            phrase = phrase.strip()
+            if len(phrase) >= 4 and phrase in normalized:
+                return True
+
+    return False
+
+
+def _explicitly_requested_skills(bound_skills: list[dict], user_text: str) -> list[dict]:
+    normalized = (user_text or "").strip().lower()
+    if not normalized:
+        return []
+
+    requested: list[dict] = []
+    for skill in bound_skills:
+        name = _skill_display_name(skill).lower()
+        if name and re.search(rf"(?<![a-z0-9_-]){re.escape(name)}(?![a-z0-9_-])", normalized):
+            requested.append(skill)
+    return requested
+
+
+def _select_activated_skills(bound_skills: list[dict], user_text: str) -> list[dict]:
+    if not bound_skills or _is_skill_listing_query(user_text):
+        return []
+
+    explicitly_requested = _explicitly_requested_skills(bound_skills, user_text)
+    if explicitly_requested:
+        return explicitly_requested
+
+    matched = [skill for skill in bound_skills if _skill_matches_request(skill, user_text)]
+    if matched:
+        return matched
+
+    # In the common single-skill authoring/test path, the associated skill is
+    # the intended operating manual for the agent unless the user is only asking
+    # for inventory.
+    if len(bound_skills) == 1:
+        return bound_skills
+
+    return []
+
+
+def _build_skill_runtime_prompt(bound_skills: list[dict], user_text: str) -> tuple[str, list[str]]:
+    if not bound_skills:
+        return "", []
+
+    discovery_lines = [
+        "Agent Skills are lightweight, reusable instruction packages. Use progressive disclosure:",
+        "1. Discovery: first consider only each Skill name and short description.",
+        "2. Activation: load and follow full SKILL.md instructions only when the user task matches that Skill.",
+        "3. Execution: follow activated instructions strictly; use attached scripts/templates only when the instructions require them and the runtime supports that action.",
+        "",
+        "Available Skills (discovery view):",
+    ]
+    for skill in bound_skills:
+        name = _skill_display_name(skill)
+        purpose = skill.get("purpose") or skill.get("description") or "No short description provided"
+        capabilities = skill.get("capabilities") or []
+        discovery_lines.append(f"- {name}: {purpose}; capabilities={capabilities}")
+
+    activated_skills = _select_activated_skills(bound_skills, user_text)
+    activated_names = [_skill_display_name(skill) for skill in activated_skills]
+
+    if activated_skills:
+        discovery_lines.append("")
+        discovery_lines.append("Activated Skill instructions for this request:")
+        for skill in activated_skills:
+            name = _skill_display_name(skill)
+            instructions = (skill.get("skill_md_content") or skill.get("purpose") or skill.get("description") or "").strip()
+            discovery_lines.append(f"\n--- Skill: {name} ---")
+            discovery_lines.append(instructions or "No detailed SKILL.md instructions were uploaded for this Skill.")
+        discovery_lines.append("")
+        discovery_lines.append("When you use an activated Skill, include a final line exactly like: 使用的 Skill: <skill name>")
+    else:
+        discovery_lines.append("")
+        discovery_lines.append("No full Skill instructions are activated for this request. Do not claim to use a Skill unless the user's task clearly matches one; ask a clarifying question if needed.")
+
+    discovery_lines.append("When a user asks about available skills, answer from the discovery list only.")
+    return "\n".join(discovery_lines), activated_names
 
 def _has_skill_name(bound_skills: list[dict], skill_names: set[str]) -> bool:
     for item in bound_skills:
@@ -129,6 +256,21 @@ def _is_design_skill(bound_skills: list[dict]) -> bool:
     return _has_skill_name(bound_skills, {"frontend-design", "front-design"})
 
 
+def _is_design_request(user_text: str) -> bool:
+    """Check if the user's question is actually about design or page creation."""
+    normalized = (user_text or "").strip().lower()
+    if not normalized:
+        return False
+
+    design_keywords = {
+        "设计", "design", "页面", "page", "website", "首页", "主页", "首頁",
+        "前端", "frontend", "网站", "web", "homepage", "布局", "layout",
+        "样式", "style", "ui", "ux", "界面", "interface", "创建", "create",
+        "制作", "make", "建立", "build", "开发", "develop", "卖", "售", "花",
+    }
+    return any(keyword in normalized for keyword in design_keywords)
+
+
 def _repair_truncated_design_output(answer: str) -> str:
     text = (answer or "").rstrip()
     if not text:
@@ -155,17 +297,17 @@ def _repair_truncated_design_output(answer: str) -> str:
 
 
 def _build_design_skill_brief(user_text: str, bound_skills: list[dict]) -> str:
-    subject = "高端卖酒网站首页"
+    subject = "高端品牌网站首页"
     if user_text.strip():
         subject = user_text.strip()
 
     brief = [
-        "Design a luxury alcohol brand homepage for: " + subject,
+        "Design a premium homepage for: " + subject,
         "Use the official frontend-design skill principles internally: make the hero the thesis, ground the page in the subject's world, use deliberate typography, make structure meaningful, and spend boldness in one memorable signature element.",
         "Return only the finished HTML/CSS page. Do not output a design plan, critique, heading, bullet list, or commentary outside the code.",
-        "The page must be one complete single-file landing page with these visible sections in order: 1) cinematic hero, 2) featured collection/product showcase, 3) brand story/origin, 4) tasting/ritual, 5) final CTA/footer.",
+        "The page must be one complete single-file landing page with visible sections tailored to the user subject: cinematic hero, featured offering showcase, brand story/origin, experience or service details, and final CTA/footer.",
         "The hero must dominate the page; the nav is only a small overlay or slim header, not the main content.",
-        "Use a premium visual language: dark velvet base, gold accents, glassy panels, burgundy or amber highlights, and one signature composition such as a bottle silhouette, cellar arch, or tasting-note ring.",
+        "Use a premium visual language tailored to the subject, with refined typography, rich imagery or code-native visuals, confident spacing, and one memorable signature composition.",
         "Avoid template behavior: no nav-only draft, no multiple options, no filler explanation, and no unfinished code blocks.",
     ]
 
@@ -324,6 +466,8 @@ async def send_message(
     user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ) -> ChatMessageResponse:
+    print(f"[send_message] ✓ Request received: session_id={session_id}, agent_id={payload.agent_id}, text={payload.text[:50]}")
+    logger.info(f"[send_message] ✓ Request received: session_id={session_id}, agent_id={payload.agent_id}, text={payload.text[:50]}")
     session = store.get_chat_session_for_user(db, session_id, user_id)
     run = store.create_runtime_run(
         db=db,
@@ -353,6 +497,8 @@ async def send_message(
     tools: list[dict] = []
     mcps: list[dict] = []
     bound_skills: list[dict] = []
+    activated_skill_names: list[str] = []
+    design_skill_active = False
     used_knowledge_bases: list[str] = []  # initialize before agent_id block
     if payload.agent_id:
         agent_resource = store.get_agent_resource_for_project(db, session.project_id, payload.agent_id)
@@ -438,24 +584,33 @@ async def send_message(
         )
 
         if bound_skills:
-            skill_lines = []
-            for item in bound_skills:
-                skill_lines.append(
-                    f"- {item.get('name')} (version={item.get('version') or '-'}, capabilities={item.get('capabilities') or []})"
-                )
-            skill_prompt = (
-                "You have the following bound skills for this agent:\n"
-                + "\n".join(skill_lines)
-                + "\nWhen a user asks about available skills, answer from this exact list only. "
-                  "When you use one of these skills in your reasoning, include a final line: '使用的 Skill: <skill name>'."
+            skill_prompt, activated_skill_names = _build_skill_runtime_prompt(bound_skills, payload.text)
+            design_skill_active = any(
+                str(name).strip().lower() in {"frontend-design", "front-design"}
+                for name in activated_skill_names
             )
-            if _is_design_skill(bound_skills):
+            is_design_req = _is_design_request(payload.text)
+            print(f"[send_message] Design skill detection: design_skill_active={design_skill_active}, is_design_request={is_design_req}, text={payload.text[:50]}")
+            logger.info(f"[send_message] Design skill detection: design_skill_active={design_skill_active}, is_design_request={is_design_req}, text={payload.text[:50]}")
+            if design_skill_active and is_design_req:
+                print(f"[send_message] ✓ Design brief injected!")
+                logger.info(f"[send_message] ✓ Design brief injected!")
                 skill_prompt += "\n" + _build_design_skill_brief(payload.text, bound_skills)
+            else:
+                print(f"[send_message] ✗ Design brief NOT injected (active={design_skill_active}, request={is_design_req})")
+                logger.info(f"[send_message] ✗ Design brief NOT injected (active={design_skill_active}, request={is_design_req})")
             if system_prompt:
                 system_prompt = f"{system_prompt}\n\n{skill_prompt}"
             else:
                 system_prompt = skill_prompt
-        
+            store.append_runtime_run_event(
+                db=db,
+                run_id=run.id,
+                stage="skill",
+                status="activated" if activated_skill_names else "discovered",
+                message="Skill discovery and progressive disclosure applied",
+                payload={"available_skills": [_skill_display_name(s) for s in bound_skills], "activated_skills": activated_skill_names},
+            )        
         # RAG: Load and retrieve from knowledge bases
         knowledge_base_ids = list(agent_config.get("knowledge_base_ids") or [])
         rag_context = ""
@@ -593,10 +748,10 @@ Use this information to provide accurate and informed responses. When relevant, 
                             provider_connection_id=provider_connection_id,
                             provider_connection=provider_connection,
                             system_prompt=system_prompt,
-                            max_tokens=900 if _is_design_skill(bound_skills) else None,
+                            max_tokens=1800 if design_skill_active else None,
                         )
                     )
-                    answer = llm_response.text
+                    answer = _llm_answer_or_error(llm_response)
                     store.append_runtime_run_event(
                         db=db,
                         run_id=run.id,
@@ -736,7 +891,7 @@ Use this information to provide accurate and informed responses. When relevant, 
                             tools=None,  # Don't send tools
                         )
                     )
-                    answer = llm_response.text
+                    answer = _llm_answer_or_error(llm_response)
                     store.append_runtime_run_event(
                         db=db,
                         run_id=run.id,
@@ -814,7 +969,7 @@ Use this information to provide accurate and informed responses. When relevant, 
                                 system_prompt=system_prompt,
                                 messages=conv_messages,
                                 tools=openai_tools if openai_tools else None,
-                                max_tokens=900 if _is_design_skill(bound_skills) else None,
+                                max_tokens=1800 if design_skill_active else None,
                             )
                         )
                         
@@ -872,11 +1027,11 @@ Use this information to provide accurate and informed responses. When relevant, 
                                     "content": result_text,
                                 })
                         else:
-                            answer = llm_response.text
+                            answer = _llm_answer_or_error(llm_response)
                             logger.info(f"[send_message] LLM returned final answer (iteration {_iter + 1})")
                             break
                     else:
-                        answer = (llm_response.text if llm_response else "") or "[max tool iterations reached]"
+                        answer = _llm_answer_or_error(llm_response) if llm_response else "[max tool iterations reached]"
 
                     store.append_runtime_run_event(
                         db=db,
@@ -895,7 +1050,7 @@ Use this information to provide accurate and informed responses. When relevant, 
                 )
         generated_files = _extract_generated_files_payload(answer)
 
-        if _is_design_skill(bound_skills) and not answer.startswith("[runtime-fallback:"):
+        if design_skill_active and not answer.startswith("[runtime-fallback:"):
             for continuation_index in range(2):
                 if not _looks_truncated_design_output(answer):
                     break
@@ -915,7 +1070,7 @@ Use this information to provide accurate and informed responses. When relevant, 
                         provider_connection_id=provider_connection_id,
                         provider_connection=provider_connection,
                         system_prompt=system_prompt,
-                        max_tokens=900,
+                        max_tokens=1200,
                     )
                 )
                 if not continuation.ok or not continuation.text:
@@ -944,10 +1099,16 @@ Use this information to provide accurate and informed responses. When relevant, 
                         payload={"repaired_length": len(answer)},
                     )
 
+        if not used_skills and activated_skill_names:
+            used_skills = activated_skill_names
         if not used_skills and mentioned_skills:
             used_skills = mentioned_skills
-        if used_skills and not is_skill_inventory_query and "使用的 Skill:" not in answer and not _is_design_skill(bound_skills):
+        design_skill_used = any(str(name).strip().lower() in {"frontend-design", "front-design"} for name in used_skills)
+        if used_skills and not is_skill_inventory_query and "使用的 Skill:" not in answer and not design_skill_used:
+            print(f"[send_message] Adding used_skills to answer: {used_skills}")
             answer = f"{answer}\n\n使用的 Skill: {', '.join(used_skills)}"
+        else:
+            print(f"[send_message] NOT adding used_skills (used_skills={used_skills}, is_inventory={is_skill_inventory_query}, has_already={'使用的 Skill:' in answer}, design_skill_used={design_skill_used})")
 
         if used_skills and not is_skill_inventory_query:
             try:
@@ -996,6 +1157,8 @@ Use this information to provide accurate and informed responses. When relevant, 
             message="Runtime execution completed",
             payload={"output_length": len(answer)},
         )
+        print(f"[send_message] Returning assistant response: chars={len(answer)}, used_skills={used_skills}", flush=True)
+        logger.info(f"[send_message] Returning assistant response: chars={len(answer)}, used_skills={used_skills}")
         return ChatMessageResponse(
             session_id=session_id,
             role="assistant",

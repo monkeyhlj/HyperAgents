@@ -109,6 +109,29 @@ def get_skill_uploaded_file_content(skill_id: str, relative_path: str, max_chars
         }
 
 
+
+def get_skill_frontmatter(skill_id: str) -> Dict[str, Any]:
+    """Read the uploaded SKILL.md frontmatter for a persisted skill package."""
+    for relative_path in _read_skill_upload_manifest(skill_id):
+        if not relative_path.replace("\\", "/").endswith("SKILL.md"):
+            continue
+        try:
+            content = get_skill_uploaded_file_content(skill_id, relative_path)
+            if content.get("is_text"):
+                parsed = parse_skill_md(str(content.get("content") or ""))
+                frontmatter = parsed.get("frontmatter") or {}
+                if isinstance(frontmatter, dict):
+                    return frontmatter
+        except Exception:
+            continue
+    return {}
+
+
+def get_skill_frontmatter_description(skill_id: str) -> str:
+    frontmatter = get_skill_frontmatter(skill_id)
+    description = frontmatter.get("description")
+    return str(description or "").strip()
+
 def delete_skill_artifacts(skill_id: str) -> None:
     """Delete persisted skill upload files and manifest for a skill resource."""
     skill_dir = SKILL_UPLOADS_ROOT / skill_id
@@ -329,6 +352,7 @@ async def process_skill_upload(
         validate_skill_metadata(parsed["frontmatter"])
         
         frontmatter = parsed["frontmatter"]
+        frontmatter_description = str(frontmatter.get("description") or "").strip()
         
         # Prepare metadata for storage
         metadata = {
@@ -351,6 +375,11 @@ async def process_skill_upload(
             "uploaded_files": uploaded_files,
         }
         
+        if frontmatter_description:
+            resource = db.get(ResourceModel, skill_id)
+            if resource and not (resource.description or "").strip():
+                resource.description = frontmatter_description
+
         # Store skill metadata in database (upsert by skill_id).
         skill_metadata = db.scalar(
             select(SkillMetadataModel).where(SkillMetadataModel.skill_id == skill_id)

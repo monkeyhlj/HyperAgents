@@ -46,10 +46,14 @@ _ALLOWED_BUILTINS: dict[str, Any] = {
 }
 
 _ALLOWED_IMPORT_NAMES = {
+    "base64",
     "datetime",
+    "io",
     "httpx",
     "json",
     "math",
+    "openpyxl",
+    "pandas",
     "re",
     "requests",
     "time",
@@ -69,10 +73,13 @@ _RUNNER_SCRIPT = r"""
 import ast
 import base64
 import datetime
+import io
 import httpx
 import json
 import math
 import sys
+import openpyxl
+import pandas
 import re
 import time
 
@@ -110,20 +117,28 @@ ALLOWED_BUILTINS = {
 }
 
 ALLOWED_IMPORT_NAMES = {
+    "base64",
     "datetime",
+    "io",
     "httpx",
     "json",
     "math",
+    "openpyxl",
+    "pandas",
     "re",
     "requests",
     "time",
 }
 
 ALLOWED_IMPORT_MODULES = {
+    "base64": base64,
     "datetime": datetime,
+    "io": io,
     "httpx": httpx,
     "json": json,
     "math": math,
+    "openpyxl": openpyxl,
+    "pandas": pandas,
     "re": re,
     "requests": httpx,
     "time": time,
@@ -299,8 +314,12 @@ def main():
 
     safe_globals = {
         "__builtins__": ALLOWED_BUILTINS,
+        "base64": base64,
         "httpx": httpx,
+        "io": io,
         "json": json,
+        "openpyxl": openpyxl,
+        "pandas": pandas,
         "re": re,
         "requests": httpx,
         "call_tool": call_tool,

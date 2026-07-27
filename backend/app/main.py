@@ -1,8 +1,11 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.exc import SQLAlchemyError
 import logging
 import asyncio
+import time
+import sys
+import os
 
 from app.api.router import api_router
 from app.core.config import settings
@@ -11,20 +14,25 @@ from app.db.session import engine
 import app.db.models  # noqa: F401
 from app.workers.knowledge_processor import process_pending_documents, process_pending_embeddings
 
-# Configure logging to show all INFO and DEBUG level messages
+# Configure logging with explicit StreamHandler to stdout
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)],
+    force=True,
 )
 
-# Set specific loggers to INFO level
-logging.getLogger("app").setLevel(logging.INFO)
-logging.getLogger("uvicorn").setLevel(logging.INFO)
-logging.getLogger("uvicorn.access").setLevel(logging.INFO)
+# Set specific loggers to DEBUG level for more verbose output
+logging.getLogger("app").setLevel(logging.DEBUG)
+logging.getLogger("uvicorn").setLevel(logging.DEBUG)
+logging.getLogger("uvicorn.access").setLevel(logging.DEBUG)
+logging.getLogger("uvicorn.error").setLevel(logging.DEBUG)
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 app = FastAPI(title=settings.app_name, version=settings.app_version)
+logger.info(f"App process started: pid={os.getpid()}, ppid={os.getppid() if hasattr(os, 'getppid') else '-'}, cwd={os.getcwd()}")
 
 # Background task scheduler
 background_task_handle = None
@@ -32,6 +40,7 @@ background_task_handle = None
 
 @app.on_event("startup")
 def on_startup() -> None:
+    logger.info(f"Application startup hook running: pid={os.getpid()}, cwd={os.getcwd()}")
     if not settings.auto_create_tables:
         return
     try:
@@ -86,6 +95,33 @@ app.add_middleware(
 )
 
 logger.info(f"CORS enabled for origins: {settings.cors_allow_origins}")
+
+
+def _console_log(message: str) -> None:
+    print(message, flush=True)
+    logger.info(message)
+
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    """Log every incoming HTTP request to the uvicorn console."""
+    start_time = time.perf_counter()
+    query = f"?{request.url.query}" if request.url.query else ""
+    path = f"{request.url.path}{query}"
+    client = request.client.host if request.client else "unknown"
+    content_length = request.headers.get("content-length", "-")
+    _console_log(f"[HTTP] --> {request.method} {path} client={client} bytes={content_length}")
+
+    try:
+        response = await call_next(request)
+    except Exception as exc:
+        process_time = time.perf_counter() - start_time
+        _console_log(f"[HTTP] !!  {request.method} {path} error={type(exc).__name__}: {exc} time={process_time:.3f}s")
+        raise
+
+    process_time = time.perf_counter() - start_time
+    _console_log(f"[HTTP] <-- {request.method} {path} status={response.status_code} time={process_time:.3f}s")
+    return response
 
 
 @app.get("/health")

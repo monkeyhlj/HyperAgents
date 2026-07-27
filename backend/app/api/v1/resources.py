@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 import json
+import re
 
 from app.api.deps import get_current_user_id, get_db
 from app.models.enums import ResourceKind, Visibility
@@ -20,6 +21,103 @@ from app.services.postgres_store import store
 
 
 router = APIRouter()
+
+
+def _skill_display_name(skill: dict) -> str:
+    return str(skill.get("name") or skill.get("skill_id") or "skill").strip()
+
+
+def _is_skill_listing_query(text: str) -> bool:
+    normalized = (text or "").strip().lower()
+    return any(pattern in normalized for pattern in ("skill", "skills", "技能", "能力")) and any(
+        word in normalized for word in ("哪些", "有什么", "list", "available", "当前", "现在")
+    )
+
+
+def _skill_matches_request(skill: dict, user_text: str) -> bool:
+    normalized = (user_text or "").strip().lower()
+    if not normalized:
+        return False
+
+    name = _skill_display_name(skill).lower()
+    if name and name in normalized:
+        return True
+
+    for capability in skill.get("capabilities") or []:
+        capability_text = str(capability).strip().lower()
+        if capability_text and capability_text in normalized:
+            return True
+
+    haystack = " ".join(
+        str(part)
+        for part in (
+            skill.get("name") or "",
+            skill.get("description") or "",
+            skill.get("purpose") or "",
+            " ".join(str(item) for item in (skill.get("capabilities") or [])),
+        )
+        if part
+    ).lower()
+    for token in re.split(r"[\s,，。；;、/|()（）\[\]{}:：]+", normalized):
+        token = token.strip()
+        if len(token) >= 3 and token in haystack:
+            return True
+
+    return False
+
+
+def _explicitly_requested_skills(bound_skills: list[dict], user_text: str) -> list[dict]:
+    normalized = (user_text or "").strip().lower()
+    if not normalized:
+        return []
+
+    requested: list[dict] = []
+    for skill in bound_skills:
+        name = _skill_display_name(skill).lower()
+        if name and re.search(rf"(?<![a-z0-9_-]){re.escape(name)}(?![a-z0-9_-])", normalized):
+            requested.append(skill)
+    return requested
+
+
+def _build_skill_preview_prompt(bound_skills: list[dict], user_text: str) -> str:
+    if not bound_skills:
+        return ""
+
+    lines = [
+        "Agent Skills are lightweight, reusable instruction packages. Use progressive disclosure:",
+        "1. Discovery: first consider only each Skill name and short description.",
+        "2. Activation: load and follow full SKILL.md instructions only when the user task matches that Skill.",
+        "3. Execution: follow activated instructions strictly.",
+        "",
+        "Available Skills (discovery view):",
+    ]
+    for item in bound_skills:
+        purpose = item.get("purpose") or item.get("description") or "No short description provided"
+        lines.append(f"- {_skill_display_name(item)}: {purpose}; capabilities={item.get('capabilities') or []}")
+
+    if _is_skill_listing_query(user_text):
+        activated = []
+    else:
+        activated = _explicitly_requested_skills(bound_skills, user_text)
+        if not activated:
+            activated = [item for item in bound_skills if _skill_matches_request(item, user_text)]
+    if not activated and len(bound_skills) == 1 and not _is_skill_listing_query(user_text):
+        activated = bound_skills
+
+    if activated:
+        lines.append("")
+        lines.append("Activated Skill instructions for this request:")
+        for item in activated:
+            instructions = (item.get("skill_md_content") or item.get("purpose") or item.get("description") or "").strip()
+            lines.append(f"\n--- Skill: {_skill_display_name(item)} ---")
+            lines.append(instructions or "No detailed SKILL.md instructions were uploaded for this Skill.")
+        lines.append("")
+        lines.append("When you use an activated Skill, include a final line exactly like: 使用的 Skill: <skill name>")
+    else:
+        lines.append("")
+        lines.append("No full Skill instructions are activated for this request. Do not claim to use a Skill unless the user's task clearly matches one.")
+
+    return "\n".join(lines)
 
 
 @router.get("/defaults", response_model=list[ResourceTemplate])
@@ -82,6 +180,19 @@ def preview_resource_chat(
     db: Session = Depends(get_db),
 ) -> ResourcePreviewChatResponse:
     store.assert_project_member(db, payload.project_id, user_id)
+    system_prompt = payload.system_prompt
+    config = payload.config or {}
+    skill_ids = [str(item) for item in (config.get("skill_ids") or []) if item]
+    bound_skills = store.list_skill_resources_for_project(
+        db,
+        project_id=payload.project_id,
+        skill_ids=skill_ids,
+        actor=user_id,
+    )
+    skill_prompt = _build_skill_preview_prompt(bound_skills, payload.text)
+    if skill_prompt:
+        system_prompt = f"{system_prompt}\n\n{skill_prompt}" if system_prompt else skill_prompt
+
     provider_connection = None
     if payload.provider_connection_id:
         provider_connection = store.get_provider_connection_runtime_config(
@@ -123,7 +234,7 @@ def preview_resource_chat(
                     provider_profile=payload.provider_profile,
                     provider_connection_id=payload.provider_connection_id,
                     provider_connection=provider_connection,
-                    system_prompt=payload.system_prompt,
+                    system_prompt=system_prompt,
                 )
             ).text
     else:
@@ -135,7 +246,7 @@ def preview_resource_chat(
                 provider_profile=payload.provider_profile,
                     provider_connection_id=payload.provider_connection_id,
                     provider_connection=provider_connection,
-                system_prompt=payload.system_prompt,
+                system_prompt=system_prompt,
             )
         ).text
     return ResourcePreviewChatResponse(text=text)
@@ -185,3 +296,5 @@ def delete_resource(
 ) -> dict[str, bool]:
     store.delete_resource(db, resource_id=resource_id, actor=user_id)
     return {"ok": True}
+
+

@@ -40,6 +40,12 @@ class SkillBindingRequest(BaseModel):
     instance_config: dict = {}
 
 
+class SkillBindingUpdateRequest(BaseModel):
+    priority: int | None = None
+    enabled: bool | None = None
+    instance_config: dict | None = None
+
+
 @router.post("/{skill_id}/upload")
 async def upload_skill(
     skill_id: str,
@@ -424,6 +430,52 @@ async def bind_skill_to_agent(
     }
 
 
+@router.patch("/agents/{agent_id}/skills/{skill_id}")
+async def update_agent_skill_binding(
+    agent_id: str,
+    skill_id: str,
+    updates: SkillBindingUpdateRequest,
+    user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """Update an agent-skill binding."""
+    agent_resource = db.scalar(select(ResourceModel).where(
+        ResourceModel.id == agent_id
+    ))
+
+    if not agent_resource:
+        raise HTTPException(status_code=404, detail="Agent resource not found")
+
+    store.assert_project_member(db, agent_resource.project_id, user_id)
+
+    binding = db.scalar(select(AgentSkillBindingModel).where(
+        (AgentSkillBindingModel.agent_id == agent_id) &
+        (AgentSkillBindingModel.skill_id == skill_id)
+    ))
+
+    if not binding:
+        raise HTTPException(status_code=404, detail="Binding not found")
+
+    if updates.priority is not None:
+        binding.priority = updates.priority
+    if updates.enabled is not None:
+        binding.enabled = updates.enabled
+    if updates.instance_config is not None:
+        binding.instance_config = updates.instance_config
+
+    db.commit()
+    db.refresh(binding)
+
+    return {
+        "binding_id": binding.id,
+        "agent_id": binding.agent_id,
+        "skill_id": binding.skill_id,
+        "priority": binding.priority,
+        "enabled": binding.enabled,
+        "instance_config": binding.instance_config,
+        "message": "Skill binding updated successfully",
+    }
+
 @router.delete("/agents/{agent_id}/skills/{skill_id}")
 async def unbind_skill_from_agent(
     agent_id: str,
@@ -549,3 +601,5 @@ async def list_skill_bindings(
         "skill_id": skill_id,
         "agents": agents
     }
+
+

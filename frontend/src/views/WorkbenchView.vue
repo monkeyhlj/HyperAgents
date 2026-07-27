@@ -188,8 +188,36 @@ markdownRenderer.table = (header, body) => {
   `;
 };
 
+function extractStandaloneHtml(text) {
+  const value = String(text || "").trim();
+  if (!value || value.startsWith("```")) {
+    return "";
+  }
+
+  const normalized = value.toLowerCase();
+  const htmlStart = normalized.search(/<!doctype\s+html|<html[\s>]/);
+  if (htmlStart >= 0) {
+    return value.slice(htmlStart);
+  }
+
+  if (normalized.includes("<style") && normalized.includes("</style>") && normalized.includes("<body")) {
+    return value;
+  }
+
+  return "";
+}
+
+function normalizeAssistantMarkdown(text) {
+  const value = String(text || "");
+  const html = extractStandaloneHtml(value);
+  if (html) {
+    return `\`\`\`html\n${html}\n\`\`\``;
+  }
+  return value;
+}
+
 function renderMarkdown(text) {
-  const rawHtml = marked.parse(text || "", { renderer: markdownRenderer });
+  const rawHtml = marked.parse(normalizeAssistantMarkdown(text), { renderer: markdownRenderer });
   return DOMPurify.sanitize(rawHtml, {
     ADD_ATTR: ["data-code"]
   });
@@ -359,9 +387,11 @@ async function sendMessage() {
     });
     history.value.push({
       role: data.role,
-      text: data.text,
+      text: data.text || "[empty response]",
       used_tools: data.used_tools || [],
-      used_mcps: data.used_mcps || []
+      used_mcps: data.used_mcps || [],
+      used_knowledge_bases: data.used_knowledge_bases || [],
+      used_skills: data.used_skills || []
     });
     message.value = "";
     await loadRuns();

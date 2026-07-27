@@ -26,7 +26,7 @@ from app.schemas.project import Project, ProjectUpdate
 from app.schemas.provider_connection import ProviderConnectionCreate, ProviderConnectionRecord, ProviderConnectionUpdate
 from app.schemas.resource import OwnedResource, Resource, ResourceUpdate
 from app.services.auth_utils import hash_password, verify_password
-from app.runtime.skill_service import delete_skill_artifacts
+from app.runtime.skill_service import delete_skill_artifacts, get_skill_frontmatter_description
 from app.services.secret_box import decrypt_secret, encrypt_secret, mask_secret
 
 
@@ -1037,13 +1037,16 @@ class PostgresStore:
             metadata = db.scalar(
                 select(SkillMetadataModel).where(SkillMetadataModel.skill_id == skill_id)
             )
+            description = (resource.description or "").strip()
+            if not description and metadata:
+                description = get_skill_frontmatter_description(resource.id)
 
             result.append(
                 {
                     "skill_id": resource.id,
                     "name": resource.name,
-                    "description": resource.description or "",
-                    "purpose": self._extract_skill_purpose(resource.description or "", metadata.skill_md_content if metadata else None),
+                    "description": description,
+                    "purpose": self._extract_skill_purpose(description, metadata.skill_md_content if metadata else None),
                     "priority": 0,
                     "enabled": True,
                     "version": metadata.version if metadata else "",
@@ -1088,13 +1091,16 @@ class PostgresStore:
             metadata = db.scalar(
                 select(SkillMetadataModel).where(SkillMetadataModel.skill_id == binding.skill_id)
             )
+            description = (resource.description or "").strip()
+            if not description and metadata:
+                description = get_skill_frontmatter_description(resource.id)
 
             result.append(
                 {
                     "skill_id": resource.id,
                     "name": resource.name,
-                    "description": resource.description or "",
-                    "purpose": self._extract_skill_purpose(resource.description or "", metadata.skill_md_content if metadata else None),
+                    "description": description,
+                    "purpose": self._extract_skill_purpose(description, metadata.skill_md_content if metadata else None),
                     "priority": binding.priority,
                     "enabled": binding.enabled,
                     "version": metadata.version if metadata else "",
