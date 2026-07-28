@@ -20,6 +20,7 @@ from app.runtime.mcp_client import (
 from app.runtime.knowledge_service import KnowledgeService
 from app.runtime.providers import _supports_function_calling
 from app.runtime.skill_executor import SkillRuntime
+from app.runtime.skill_service import get_skill_package_root
 from app.runtime.agent_engine import LangChainLLMWrapper, ReActAgent, ToolManager
 from app.schemas.resource import (
     CodeExecutionAuditRecord,
@@ -461,6 +462,49 @@ def _extract_requested_columns(user_text: str) -> list[str]:
             columns.append(part)
     return columns[:24]
 
+
+def _find_active_skill(bound_skills: list[dict], active_names: list[str], candidates: set[str]) -> dict | None:
+    active_set = {str(name).strip().lower() for name in active_names}
+    for skill in bound_skills:
+        name = _skill_display_name(skill).strip().lower()
+        if name in active_set and name in candidates:
+            return skill
+    return None
+
+
+def _run_xlsx_recalc_script(user_id: str, relative_path: str, skill: dict | None) -> dict:
+    if not skill:
+        return {"status": "skipped", "reason": "No activated xlsx skill package"}
+    try:
+        package_root = get_skill_package_root(str(skill.get("skill_id") or ""))
+        script_path = package_root / "scripts" / "recalc.py"
+        if not script_path.exists():
+            return {"status": "skipped", "reason": "xlsx skill has no scripts/recalc.py"}
+
+        workbook_path = user_file_service.get_file_for_download(user_id, relative_path)
+        proc = subprocess.run(
+            [sys.executable, str(script_path), str(workbook_path), "30"],
+            cwd=str(package_root),
+            text=True,
+            capture_output=True,
+            timeout=45,
+        )
+        stdout = (proc.stdout or "").strip()
+        stderr = (proc.stderr or "").strip()
+        parsed = None
+        for line in reversed(stdout.splitlines()):
+            try:
+                parsed = json.loads(line.strip())
+                break
+            except Exception:
+                continue
+        payload = parsed if isinstance(parsed, dict) else {"stdout": stdout, "stderr": stderr}
+        status = "succeeded" if proc.returncode == 0 and not payload.get("error") else "failed"
+        return {"status": status, "returncode": proc.returncode, "payload": payload, "stderr": stderr}
+    except subprocess.TimeoutExpired:
+        return {"status": "failed", "error": "scripts/recalc.py timed out after 45s"}
+    except Exception as exc:
+        return {"status": "failed", "error": str(exc)}
 
 def _build_generic_xlsx_artifact(user_text: str) -> bytes:
     title = _derive_artifact_title(user_text, fallback="数据表")
@@ -1020,6 +1064,19 @@ Use this information to provide accurate and informed responses. When relevant, 
             xlsx_title = _derive_artifact_title(payload.text, fallback="数据表")
             xlsx_path = f"{xlsx_base_dir}/{_safe_artifact_filename(xlsx_title, 'xlsx')}"
             user_file_service.save_bytes_file(user_id, xlsx_path, _build_generic_xlsx_artifact(payload.text))
+            xlsx_recalc = _run_xlsx_recalc_script(
+                user_id,
+                xlsx_path,
+                _find_active_skill(bound_skills, activated_skill_names, {"xlsx", "spreadsheet", "spreadsheets"}),
+            )
+            store.append_runtime_run_event(
+                db=db,
+                run_id=run.id,
+                stage="skill_runtime",
+                status=xlsx_recalc.get("status") or "unknown",
+                message="xlsx Skill scripts/recalc.py attempted for generated workbook",
+                payload={"skill": "xlsx", "file": xlsx_path, **xlsx_recalc},
+            )
             answer = (
                 "已使用 xlsx Skill 生成电子表格文件。\n\n"
                 "文件已保存到 My Files：\n"
@@ -1457,9 +1514,7 @@ Use this information to provide accurate and informed responses. When relevant, 
                     )
                 elif design_skill_active:
                     html = _extract_html_artifact(answer)
-                    if not html or "<body" not in html.lower():
-                        html = _build_front_design_fallback_html(payload.text)
-                    if html:
+                    if html and "<body" in html.lower():
                         html_path = f"{artifact_base_dir}/homepage.html"
                         user_file_service.save_text_file(user_id, html_path, html)
                         saved_file_paths.append(html_path)
@@ -1478,6 +1533,19 @@ Use this information to provide accurate and informed responses. When relevant, 
                     xlsx_title = _derive_artifact_title(payload.text, fallback="数据表")
                     xlsx_path = f"{artifact_base_dir}/{_safe_artifact_filename(xlsx_title, 'xlsx')}"
                     user_file_service.save_bytes_file(user_id, xlsx_path, _build_generic_xlsx_artifact(payload.text))
+                    xlsx_recalc = _run_xlsx_recalc_script(
+                        user_id,
+                        xlsx_path,
+                        _find_active_skill(bound_skills, used_skills, {"xlsx", "spreadsheet", "spreadsheets"}),
+                    )
+                    store.append_runtime_run_event(
+                        db=db,
+                        run_id=run.id,
+                        stage="skill_runtime",
+                        status=xlsx_recalc.get("status") or "unknown",
+                        message="xlsx Skill scripts/recalc.py attempted for generated workbook",
+                        payload={"skill": "xlsx", "file": xlsx_path, **xlsx_recalc},
+                    )
                     saved_file_paths.append(xlsx_path)
                     answer = (
                         "已使用 xlsx Skill 生成电子表格文件。\n\n"

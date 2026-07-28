@@ -45,6 +45,9 @@ Agent Skill 是一份“怎么做”的说明书，核心文件是 `SKILL.md`。
 - 运行时是本地 Python subprocess，不会自动安装 requirements，也不会启用网络或 Docker 沙箱。
 - 没有可执行 entrypoint 的 Skill 不会报错，会作为说明型 Skill 使用，并在 Runtime Timeline 中显示 skipped。
 - 依赖外部程序的脚本需要运行环境已安装对应程序，例如 xlsx 的 LibreOffice/`soffice` 重算脚本需要系统 PATH 中存在 `soffice`。
+- 如果缺少 `soffice`，xlsx 的 `scripts/recalc.py` 会执行失败并返回 `soffice not found on PATH`；这说明脚本被调用了，但运行环境缺少依赖。
+- 没有声明 `entrypoint` 的 Skill 不会被虚构为 `scripts/main:execute`。这类 Skill 仍会按 `SKILL.md` 作为说明型 Skill 激活；附带脚本只有在运行时明确接入或由模型/代码执行环境按说明调用时才会运行。
+- front-design 这类产物型说明 Skill 只有在模型返回完整 HTML 时才保存文件；后端不应再用固定 fallback 页面伪装成 Skill 生成结果。
 - 对产物型 Skill，聊天回答优先返回 My Files 路径，而不是直接展示大段 HTML/XLSX 内容。
 - Skill Runtime 不应把具体业务意图写死在后端代码里，例如某一种报表、某一个行业首页或某个测试提示词。用户意图始终来自当前请求，Skill 只提供可复用的工作流、规则、脚本和参考资料。
 - 当 Skill 没有可执行 entrypoint，或模型输出需要保存为文件时，后端只能使用通用 artifact 管线：根据用户请求动态命名、抽取显式字段、保存文件；不能依赖“销售表”“班级表”“卖花网站”等固定关键词分支。

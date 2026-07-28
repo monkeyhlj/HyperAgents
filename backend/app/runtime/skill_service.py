@@ -379,7 +379,7 @@ async def process_skill_upload(
         metadata = {
             "author": frontmatter.get("author", owner_id),
             "version": frontmatter.get("version") or "0.1.0",
-            "entrypoint": frontmatter.get("entrypoint") or "scripts/main:execute",
+            "entrypoint": frontmatter.get("entrypoint") or "",
             "capabilities": frontmatter.get("capabilities", []),
             "requirements": frontmatter.get("requirements", {}),
             "input_schema": frontmatter.get("input_schema", {}),
