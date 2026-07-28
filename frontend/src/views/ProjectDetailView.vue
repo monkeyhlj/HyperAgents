@@ -1,5 +1,5 @@
 <template>
-  <div>
+  <div class="page-shell">
     <Card dis-hover>
       <template #title>
         <Space>
@@ -105,7 +105,7 @@
         </FormItem>
       </Form>
 
-      <Table :columns="columns" :data="filteredResources" stripe>
+      <Table :columns="columns" :data="pagedResources" stripe>
         <template #action="{ row }">
           <Space>
             <Button size="small" :disabled="!canEditResource(row)" @click="openResourceEditDrawer(row)">Edit</Button>
@@ -121,6 +121,15 @@
           </Space>
         </template>
       </Table>
+      <Page
+        v-if="filteredResources.length > pageSize"
+        class="table-pagination"
+        :total="filteredResources.length"
+        :current="resourcePage"
+        :page-size="pageSize"
+        show-total
+        @on-change="resourcePage = $event"
+      />
     </Card>
 
     <Drawer v-model="showEditDrawer" title="Edit Resource" width="520" :mask-closable="false">
@@ -142,10 +151,10 @@
             <Option v-for="item in visibilityOptions" :key="item" :value="item">{{ item }}</Option>
           </Select>
         </FormItem>
-        <FormItem label="Model Provider">
+        <FormItem v-if="editForm.kind === 'agent'" label="Model Provider">
           <Input v-model="editForm.model_provider" placeholder="Model provider" maxlength="60" />
         </FormItem>
-        <FormItem label="Model Name">
+        <FormItem v-if="editForm.kind === 'agent'" label="Model Name">
           <Input v-model="editForm.model_name" placeholder="Model name" maxlength="120" />
         </FormItem>
         <FormItem label="Provider Profile">
@@ -175,7 +184,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { Message } from "view-ui-plus";
 import { api } from "../services/api";
@@ -189,6 +198,8 @@ const resources = ref([]);
 const loadingProject = ref(false);
 const loadingResources = ref(false);
 const resourceQuery = ref("");
+const resourcePage = ref(1);
+const pageSize = 10;
 const showEditDrawer = ref(false);
 const editSaving = ref(false);
 const showDeleteModal = ref(false);
@@ -215,7 +226,7 @@ const columns = [
   { title: "Model Name", key: "model_name", minWidth: 160 },
   { title: "Owner", key: "owner_id", minWidth: 140 },
   { title: "ID", key: "id", minWidth: 280 },
-  { title: "Action", slot: "action", minWidth: 160 }
+  { title: "Action", slot: "action", minWidth: 220 }
 ];
 
 const projectId = computed(() => String(route.params.projectId || ""));
@@ -227,6 +238,11 @@ const filteredResources = computed(() => {
     return resources.value;
   }
   return resources.value.filter((item) => item.id.toLowerCase().includes(q) || item.name.toLowerCase().includes(q));
+});
+
+const pagedResources = computed(() => {
+  const start = (resourcePage.value - 1) * pageSize;
+  return filteredResources.value.slice(start, start + pageSize);
 });
 
 function backToProjects() {
@@ -286,8 +302,8 @@ async function saveResource() {
       name,
       description: editForm.value.description,
       visibility: editForm.value.visibility || undefined,
-      model_provider: editForm.value.model_provider || null,
-      model_name: editForm.value.model_name || null,
+      model_provider: editForm.value.kind === "agent" ? (editForm.value.model_provider || null) : null,
+      model_name: editForm.value.kind === "agent" ? (editForm.value.model_name || null) : null,
       provider_profile: editForm.value.provider_profile || null
     });
     Message.success("Resource updated");
@@ -348,12 +364,15 @@ async function loadResources() {
   loadingResources.value = true;
   try {
     resources.value = await api.listResources(projectId.value);
+    resourcePage.value = 1;
   } catch (error) {
     Message.error(error.message || "Load resources failed");
   } finally {
     loadingResources.value = false;
   }
 }
+
+watch(resourceQuery, () => { resourcePage.value = 1; });
 
 onMounted(async () => {
   await loadProject();

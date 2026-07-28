@@ -1,5 +1,5 @@
 <template>
-  <div>
+  <div class="page-shell">
     <Card dis-hover>
       <template #title>Create Project</template>
       <Form :model="form" inline>
@@ -32,7 +32,7 @@
 
     <Card class="mt16" dis-hover>
       <template #title>Project List</template>
-      <Table :columns="columns" :data="filteredProjects" stripe>
+      <Table :columns="columns" :data="pagedProjects" stripe>
         <template #name="{ row }">
           <a class="project-link" @click.prevent="openDetail(row)">{{ row.name }}</a>
         </template>
@@ -63,6 +63,15 @@
           </Space>
         </template>
       </Table>
+      <Page
+        v-if="filteredProjects.length > pageSize"
+        class="table-pagination"
+        :total="filteredProjects.length"
+        :current="projectPage"
+        :page-size="pageSize"
+        show-total
+        @on-change="projectPage = $event"
+      />
     </Card>
 
     <Drawer v-model="showEditDrawer" title="Edit Project" width="480" :mask-closable="false">
@@ -234,7 +243,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { Message } from "view-ui-plus";
 import { api } from "../services/api";
@@ -245,6 +254,8 @@ const router = useRouter();
 const form = ref({ name: "", description: "" });
 const projects = ref([]);
 const projectQuery = ref("");
+const projectPage = ref(1);
+const pageSize = 10;
 const loading = ref(false);
 const creating = ref(false);
 const showMemberModal = ref(false);
@@ -309,6 +320,11 @@ const filteredProjects = computed(() => {
     return projects.value;
   }
   return projects.value.filter((item) => item.id.toLowerCase().includes(q) || item.name.toLowerCase().includes(q));
+});
+
+const pagedProjects = computed(() => {
+  const start = (projectPage.value - 1) * pageSize;
+  return filteredProjects.value.slice(start, start + pageSize);
 });
 
 async function loadProjects() {
@@ -552,6 +568,8 @@ async function confirmDeleteProject() {
     deleting.value = false;
   }
 }
+
+watch(projectQuery, () => { projectPage.value = 1; });
 
 onMounted(loadProjects);
 </script>

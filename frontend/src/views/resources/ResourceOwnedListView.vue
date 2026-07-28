@@ -1,5 +1,5 @@
 <template>
-  <div>
+  <div class="page-shell">
     <Card dis-hover>
       <template #title>
         <Space>
@@ -24,7 +24,7 @@
         </FormItem>
       </Form>
 
-      <Table :columns="columns" :data="resources" stripe>
+      <Table :columns="columns" :data="pagedResources" stripe>
         <template #project="{ row }">
           <Tag color="gold">{{ row.project_name }}</Tag>
         </template>
@@ -76,6 +76,15 @@
           </Space>
         </template>
       </Table>
+      <Page
+        v-if="resources.length > pageSize"
+        class="table-pagination"
+        :total="resources.length"
+        :current="resourcePage"
+        :page-size="pageSize"
+        show-total
+        @on-change="resourcePage = $event"
+      />
     </Card>
 
     <Drawer v-model="showDetail" :title="`Resource Detail - ${current?.name || ''}`" width="560">
@@ -87,8 +96,8 @@
         <DescriptionsItem v-if="resourceKind === 'tool'" label="Tool Runtime">{{ toolConfig(current).runtime || '-' }}</DescriptionsItem>
         <DescriptionsItem v-if="resourceKind === 'tool'" label="Function Name">{{ toolConfig(current).entrypoint || '-' }}</DescriptionsItem>
         <DescriptionsItem v-if="resourceKind === 'tool'" label="Shared In Project">{{ toolConfig(current).shared_in_project === false ? 'false' : 'true' }}</DescriptionsItem>
-        <DescriptionsItem v-if="resourceKind !== 'tool'" label="Model Provider">{{ current.model_provider || '-' }}</DescriptionsItem>
-        <DescriptionsItem v-if="resourceKind !== 'tool'" label="Model Name">{{ current.model_name || '-' }}</DescriptionsItem>
+        <DescriptionsItem v-if="showModelFields" label="Model Provider">{{ current.model_provider || '-' }}</DescriptionsItem>
+        <DescriptionsItem v-if="showModelFields" label="Model Name">{{ current.model_name || '-' }}</DescriptionsItem>
         <DescriptionsItem v-if="resourceKind !== 'tool'" label="Provider Profile">{{ current.provider_profile || '-' }}</DescriptionsItem>
         <DescriptionsItem v-if="resourceKind === 'mcp'" label="Transport">{{ mcpConfig(current).transport || 'streamable_http' }}</DescriptionsItem>
         <DescriptionsItem v-if="resourceKind === 'mcp'" label="Endpoint URL">{{ mcpConfig(current).endpoint_url || '-' }}</DescriptionsItem>
@@ -120,6 +129,8 @@ const route = useRoute();
 const router = useRouter();
 
 const resources = ref([]);
+const resourcePage = ref(1);
+const pageSize = 10;
 const loading = ref(false);
 const deleting = ref(false);
 const probingById = ref({});
@@ -133,6 +144,12 @@ const current = ref(null);
 const pageTitle = computed(() => route.meta.title || "Resources");
 const resourceKind = computed(() => route.meta.kind || null);
 const createRoute = computed(() => route.meta.createRoute || null);
+const showModelFields = computed(() => resourceKind.value === "agent");
+const pagedResources = computed(() => {
+  const start = (resourcePage.value - 1) * pageSize;
+  return resources.value.slice(start, start + pageSize);
+});
+
 const kindLabel = computed(() => {
   const map = {
     agent: "Agent",
@@ -156,7 +173,7 @@ const columns = computed(() => {
       { title: "Function", slot: "toolFunction", minWidth: 150 },
       { title: "Shared", slot: "toolShared", width: 100 },
       { title: "ID", key: "id", minWidth: 260 },
-      { title: "Action", slot: "action", minWidth: 200 }
+      { title: "Action", slot: "action", minWidth: 260 }
     ];
   }
 
@@ -170,20 +187,32 @@ const columns = computed(() => {
       { title: "Endpoint/Command", slot: "mcpEndpoint", minWidth: 220 },
       { title: "Last Test", slot: "mcpLastProbe", width: 120 },
       { title: "ID", key: "id", minWidth: 220 },
-      { title: "Action", slot: "action", minWidth: 240 }
+      { title: "Action", slot: "action", minWidth: 320 }
     ];
   }
 
-  return [
+  const baseColumns = [
     { title: "Kind", key: "kind", width: 120 },
     { title: "Name", key: "name", minWidth: 180 },
     { title: "Project", slot: "project", minWidth: 160 },
-    { title: "Visibility", key: "visibility", width: 120 },
-    { title: "Model Provider", key: "model_provider", minWidth: 140 },
-    { title: "Model Name", key: "model_name", minWidth: 160 },
-    { title: "ID", key: "id", minWidth: 280 },
-    { title: "Action", slot: "action", minWidth: 200 }
+    { title: "Visibility", key: "visibility", width: 120 }
   ];
+
+  if (showModelFields.value) {
+    baseColumns.push(
+      { title: "Model Provider", key: "model_provider", minWidth: 140 },
+      { title: "Model Name", key: "model_name", minWidth: 160 }
+    );
+  }
+
+  const actionWidth = resourceKind.value === "knowledge_base" ? 380 : 260;
+
+  baseColumns.push(
+    { title: "ID", key: "id", minWidth: 280 },
+    { title: "Action", slot: "action", minWidth: actionWidth }
+  );
+
+  return baseColumns;
 });
 
 function toolConfig(resource) {
@@ -223,6 +252,7 @@ async function probeMcp(row) {
 async function loadData() {
   loading.value = true;
   try {
+    resourcePage.value = 1;
     resources.value = await api.listOwnedResources({
       kind: resourceKind.value || undefined,
       q: queryText.value.trim() || undefined,

@@ -1,5 +1,5 @@
 <template>
-  <div>
+  <div class="page-shell">
     <Card dis-hover>
       <template #title>
         <Space>
@@ -88,7 +88,7 @@
           </Space>
         </template>
 
-        <Table :columns="columns" :data="documents" stripe>
+        <Table :columns="columns" :data="pagedDocuments" stripe>
           <template #status="{ row }">
             <Tag v-if="row.status === 'ready'" color="green">{{ row.status }}</Tag>
             <Tag v-else-if="row.status === 'processing'" color="blue">{{ row.status }}</Tag>
@@ -118,6 +118,16 @@
           </template>
         </Table>
 
+        <Page
+          v-if="documents.length > pageSize"
+          class="table-pagination"
+          :total="documents.length"
+          :current="documentPage"
+          :page-size="pageSize"
+          show-total
+          @on-change="documentPage = $event"
+        />
+
         <div v-if="documents.length === 0" style="text-align: center; padding: 40px">
           <p>No documents yet. Upload your first document to get started.</p>
         </div>
@@ -144,6 +154,8 @@ const router = useRouter();
 
 const knowledge = ref(null);
 const documents = ref([]);
+const documentPage = ref(1);
+const pageSize = 10;
 const loading = ref(false);
 const uploading = ref(false);
 const uploadProgress = ref(0);
@@ -156,6 +168,11 @@ const errorDetail = ref("");
 const fileInput = ref(null);
 
 const resourceId = computed(() => route.params.resourceId);
+
+const pagedDocuments = computed(() => {
+  const start = (documentPage.value - 1) * pageSize;
+  return documents.value.slice(start, start + pageSize);
+});
 
 const hasFailedDocuments = computed(() =>
   documents.value.some((d) => d.status === "failed")
@@ -196,12 +213,12 @@ const columns = computed(() => [
   {
     title: "Created",
     slot: "createdAt",
-    width: 160,
+    width: 190,
   },
   {
     title: "Action",
     slot: "action",
-    width: 160,
+    width: 190,
     align: "center",
   },
 ]);
@@ -236,6 +253,7 @@ async function loadDocuments() {
       offset: 0,
     });
     documents.value = response.items || [];
+    documentPage.value = 1;
   } catch (error) {
     Message.error("Failed to load documents");
     console.error(error);

@@ -1,5 +1,5 @@
-﻿<template>
-  <div>
+<template>
+  <div class="page-shell">
     <Row :gutter="16">
       <Col v-if="isAgentKind" :xs="24" :lg="8">
         <Card dis-hover class="chat-test-card">

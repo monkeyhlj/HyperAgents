@@ -1,5 +1,5 @@
 <template>
-  <div>
+  <div class="page-shell">
     <Card dis-hover>
       <template #title>
         <Space>
@@ -121,7 +121,7 @@
               <span>SKILL.md Documentation</span>
             </template>
             <div v-if="skillMetadata?.skill_md_content" class="markdown-content" v-html="renderMarkdown(skillMetadata.skill_md_content)"></div>
-            <div v-else style="text-align: center; padding: 40px; color: #999">
+            <div v-if="bindings.length === 0" style="text-align: center; padding: 40px; color: #999">
               No documentation available
             </div>
           </Card>
@@ -269,7 +269,7 @@
               </Space>
             </template>
 
-            <Table v-if="bindings.length > 0" :columns="bindingColumns" :data="bindings" stripe>
+            <Table v-if="bindings.length > 0" :columns="bindingColumns" :data="pagedBindings" stripe>
               <template #enabled="{ row }">
                 <Switch v-model="row.enabled" size="small" @on-change="updateBinding(row)" />
               </template>
@@ -282,8 +282,17 @@
                 </Button>
               </template>
             </Table>
+            <Page
+              v-if="bindings.length > pageSize"
+              class="table-pagination"
+              :total="bindings.length"
+              :current="bindingPage"
+              :page-size="pageSize"
+              show-total
+              @on-change="bindingPage = $event"
+            />
 
-            <div v-else style="text-align: center; padding: 40px; color: #999">
+            <div v-if="bindings.length === 0" style="text-align: center; padding: 40px; color: #999">
               This skill is not bound to any agents yet
             </div>
           </Card>
@@ -337,6 +346,8 @@ const router = useRouter();
 const skill = ref(null);
 const skillMetadata = ref(null);
 const bindings = ref([]);
+const bindingPage = ref(1);
+const pageSize = 10;
 const loading = ref(false);
 const bindingLoading = ref(false);
 const uploading = ref(false);
@@ -353,6 +364,11 @@ const filePreviewLoading = ref(false);
 const filePreviewError = ref("");
 
 // Test form
+const pagedBindings = computed(() => {
+  const start = (bindingPage.value - 1) * pageSize;
+  return bindings.value.slice(start, start + pageSize);
+});
+
 const testForm = ref({ inputJson: "" });
 const testing = ref(false);
 const testError = ref("");
@@ -373,7 +389,7 @@ const bindingColumns = computed(() => [
   {
     title: "Priority",
     slot: "priority",
-    width: 100,
+    width: 130,
   },
   {
     title: "Enabled",
@@ -383,7 +399,7 @@ const bindingColumns = computed(() => [
   {
     title: "Action",
     slot: "action",
-    width: 100,
+    width: 130,
     align: "center",
   },
 ]);
@@ -437,6 +453,7 @@ async function loadBindings() {
   try {
     const response = await api.listSkillBindings(resourceId.value);
     bindings.value = response.agents || [];
+    bindingPage.value = 1;
   } catch (error) {
     // Silently ignore if endpoint not available yet
     console.warn("Failed to load bindings:", error);

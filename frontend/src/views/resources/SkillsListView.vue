@@ -28,7 +28,7 @@
         </FormItem>
       </Form>
 
-      <Table :columns="columns" :data="filteredSkills" stripe>
+      <Table :columns="columns" :data="pagedSkills" stripe>
         <template #version="{ row }">
           <Tag color="blue">{{ row.version }}</Tag>
         </template>
@@ -55,6 +55,15 @@
           </Space>
         </template>
       </Table>
+      <Page
+        v-if="filteredSkills.length > pageSize"
+        class="table-pagination"
+        :total="filteredSkills.length"
+        :current="skillPage"
+        :page-size="pageSize"
+        show-total
+        @on-change="skillPage = $event"
+      />
 
       <div v-if="filteredSkills.length === 0" style="text-align: center; padding: 40px">
         <p>No skills found. Create your first skill to get started.</p>
@@ -102,7 +111,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { Message, Modal } from "view-ui-plus";
 import { api } from "../../services/api";
@@ -112,6 +121,8 @@ const router = useRouter();
 const projectStore = useProjectStore();
 
 const skills = ref([]);
+const skillPage = ref(1);
+const pageSize = 10;
 const loading = ref(false);
 const deleting = ref(false);
 const queryText = ref("");
@@ -162,10 +173,15 @@ const columns = computed(() => [
   {
     title: "Action",
     slot: "action",
-    width: 180,
+    width: 260,
     align: "center",
   },
 ]);
+
+const pagedSkills = computed(() => {
+  const start = (skillPage.value - 1) * pageSize;
+  return filteredSkills.value.slice(start, start + pageSize);
+});
 
 const filteredSkills = computed(() => {
   return skills.value.filter((skill) => {
@@ -180,6 +196,8 @@ const filteredSkills = computed(() => {
   });
 });
 
+watch([queryText, statusFilter], () => { skillPage.value = 1; });
+
 onMounted(() => {
   loadData();
 });
@@ -189,6 +207,7 @@ async function loadData() {
   try {
     const response = await api.listProjectSkills(projectStore.currentProject?.id || "");
     skills.value = response.skills || [];
+    skillPage.value = 1;
   } catch (error) {
     Message.error("Failed to load skills");
     console.error(error);
