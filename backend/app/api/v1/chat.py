@@ -1516,21 +1516,60 @@ Use this information to provide accurate and informed responses. When relevant, 
                     )
                 elif design_skill_active:
                     html = _extract_html_artifact(answer)
-                    if html and "<body" in html.lower():
-                        html_path = f"{artifact_base_dir}/homepage.html"
-                        user_file_service.save_text_file(user_id, html_path, html)
-                        saved_file_paths.append(html_path)
-                        answer = (
-                            "已使用 front-design Skill 生成网站首页文件。\n\n"
-                            "文件已保存到 My Files：\n"
-                            f"- {html_path}\n\n"
-                            "请到 My Files 中下载或预览该 HTML 文件。"
+                    if not html or "<body" not in html.lower():
+                        retry_prompt = (
+                            "The previous front-design Skill response was not a complete savable HTML document. "
+                            "Generate one complete standalone homepage HTML file now. "
+                            "Start with <!DOCTYPE html> and end with </html>. "
+                            "Include complete <head>, <style>, and <body>. "
+                            "Do not include markdown fences, labels, explanations, or commentary.\n\n"
+                            f"User request:\n{payload.text}\n\n"
+                            f"Previous response, for context only:\n{answer[:2500]}"
                         )
-                    else:
-                        answer = (
-                            "front-design Skill 已激活，但模型没有返回可保存的完整 HTML 文件。"
-                            "请重试，或缩小页面范围后再生成。"
+                        retry_response = llm_service.generate(
+                            LLMRequest(
+                                text=retry_prompt,
+                                model_provider=model_provider,
+                                model_name=model_name,
+                                provider_profile=provider_profile,
+                                provider_connection_id=provider_connection_id,
+                                provider_connection=provider_connection,
+                                system_prompt=system_prompt,
+                                max_tokens=8000,
+                            )
                         )
+                        retry_html = _extract_html_artifact(retry_response.text if retry_response and retry_response.ok else "")
+                        if retry_html and "<body" in retry_html.lower():
+                            html = retry_html
+                            store.append_runtime_run_event(
+                                db=db,
+                                run_id=run.id,
+                                stage="llm_repair",
+                                status="succeeded",
+                                message="Recovered complete front-design HTML on retry",
+                                payload={"html_length": len(html)},
+                            )
+
+                    if not html or "<body" not in html.lower():
+                        html = _build_front_design_fallback_html(payload.text)
+                        store.append_runtime_run_event(
+                            db=db,
+                            run_id=run.id,
+                            stage="skill_artifact",
+                            status="fallback",
+                            message="Generated local fallback HTML because front-design model output was not savable",
+                            payload={"original_answer_length": len(answer or ""), "html_length": len(html)},
+                        )
+
+                    html_path = f"{artifact_base_dir}/homepage.html"
+                    user_file_service.save_text_file(user_id, html_path, html)
+                    saved_file_paths.append(html_path)
+                    answer = (
+                        "已使用 front-design Skill 生成网站首页文件。\n\n"
+                        "文件已保存到 My Files：\n"
+                        f"- {html_path}\n\n"
+                        "请到 My Files 中下载或预览该 HTML 文件。"
+                    )
                 elif _is_xlsx_active(used_skills) and _should_create_xlsx_artifact(payload.text):
                     xlsx_title = _derive_artifact_title(payload.text, fallback="数据表")
                     xlsx_path = f"{artifact_base_dir}/{_safe_artifact_filename(xlsx_title, 'xlsx')}"

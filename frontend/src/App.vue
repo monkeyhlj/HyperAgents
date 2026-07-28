@@ -118,7 +118,11 @@
         </div>
 
         <Content class="app-content">
-          <RouterView />
+          <RouterView v-slot="{ Component, route: viewRoute }">
+            <KeepAlive include="WorkbenchView">
+              <component :is="Component" :key="viewRoute.meta.keepAlive ? viewRoute.name : viewRoute.fullPath" />
+            </KeepAlive>
+          </RouterView>
         </Content>
       </Layout>
     </Layout>

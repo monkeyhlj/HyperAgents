@@ -174,20 +174,35 @@
   </div>
 </template>
 <script setup>
-import { computed, nextTick, onMounted, ref } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { Message } from "view-ui-plus";
 import { api } from "../services/api";
 
+defineOptions({ name: "WorkbenchView" });
+
+const WORKBENCH_STORAGE_KEY = "hyperagents.workbench.state";
+
+function loadSavedWorkbenchState() {
+  try {
+    const raw = window.localStorage.getItem(WORKBENCH_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+const savedWorkbenchState = loadSavedWorkbenchState();
+
 const projects = ref([]);
-const projectQuery = ref("");
+const projectQuery = ref(savedWorkbenchState.projectQuery || "");
 const selectedProject = ref(null);
-const sessionTitle = ref("default");
-const sessionId = ref("");
-const agentId = ref("");
+const sessionTitle = ref(savedWorkbenchState.sessionTitle || "default");
+const sessionId = ref(savedWorkbenchState.sessionId || "");
+const agentId = ref(savedWorkbenchState.agentId || "");
 const agents = ref([]);
-const message = ref("");
+const message = ref(savedWorkbenchState.message || "");
 const history = ref([]);
 const creatingSession = ref(false);
 const loadingSessions = ref(false);
@@ -198,7 +213,26 @@ const runs = ref([]);
 const runEvents = ref([]);
 const currentRunId = ref("");
 const chatStreamRef = ref(null);
+let restoringWorkbench = false;
 
+function persistWorkbenchState() {
+  if (restoringWorkbench) return;
+  try {
+    window.localStorage.setItem(
+      WORKBENCH_STORAGE_KEY,
+      JSON.stringify({
+        projectId: selectedProject.value?.id || "",
+        sessionId: sessionId.value || "",
+        agentId: agentId.value || "",
+        message: message.value || "",
+        sessionTitle: sessionTitle.value || "default",
+        projectQuery: projectQuery.value || ""
+      })
+    );
+  } catch {
+    // Browser storage may be unavailable in private or restricted modes.
+  }
+}
 function escapeHtml(text) {
   return String(text)
     .replaceAll("&", "&amp;")
@@ -371,7 +405,8 @@ async function loadProjects() {
   try {
     projects.value = await api.listProjects();
     if (!selectedProject.value && projects.value.length > 0) {
-      selectedProject.value = projects.value[0];
+      const savedProject = projects.value.find((item) => item.id === savedWorkbenchState.projectId);
+      selectedProject.value = savedProject || projects.value[0];
     }
   } catch (error) {
     Message.error(error.message || "Load projects failed");
@@ -401,13 +436,15 @@ async function createSession() {
 
 async function loadAgents() {
   if (!selectedProject.value) {
-    Message.warning("Please select a project first");
     return;
   }
 
   loadingAgents.value = true;
   try {
     agents.value = await api.listProjectAgents(selectedProject.value.id);
+    if (agentId.value && !agents.value.some((item) => item.id === agentId.value)) {
+      agentId.value = "";
+    }
   } catch (error) {
     Message.error(error.message || "Load agents failed");
   } finally {
@@ -417,13 +454,18 @@ async function loadAgents() {
 
 async function loadSessions() {
   if (!selectedProject.value) {
-    Message.warning("Please select a project first");
     return;
   }
 
   loadingSessions.value = true;
   try {
     sessions.value = await api.listSessions(selectedProject.value.id);
+    if (sessionId.value && !sessions.value.some((item) => item.id === sessionId.value)) {
+      sessionId.value = "";
+      history.value = [];
+      runs.value = [];
+      runEvents.value = [];
+    }
   } catch (error) {
     Message.error(error.message || "Load sessions failed");
   } finally {
@@ -431,12 +473,12 @@ async function loadSessions() {
   }
 }
 
-async function openSession(id) {
+async function openSession(id, notify = true) {
   sessionId.value = id;
   try {
     history.value = await api.listMessages(id);
     await loadRuns();
-    Message.success("Session loaded");
+    if (notify) Message.success("Session loaded");
   } catch (error) {
     Message.error(error.message || "Load messages failed");
   }
@@ -459,6 +501,7 @@ async function loadRuns() {
 }
 
 async function openRun(runId) {
+  currentRunId.value = runId;
   try {
     runEvents.value = await api.listRunEvents(runId);
   } catch (error) {
@@ -524,10 +567,36 @@ async function sendMessage() {
     sending.value = false;
   }
 }
-onMounted(async () => {
-  await loadProjects();
-  await loadAgents();
-});
+async function initializeWorkbench() {
+  restoringWorkbench = true;
+  try {
+    await loadProjects();
+    await loadAgents();
+    await loadSessions();
+
+    if (sessionId.value && sessions.value.some((item) => item.id === sessionId.value)) {
+      await openSession(sessionId.value, false);
+      await scrollChatToBottom();
+    }
+  } finally {
+    restoringWorkbench = false;
+    persistWorkbenchState();
+  }
+}
+
+watch(
+  [
+    () => selectedProject.value?.id,
+    sessionId,
+    agentId,
+    message,
+    sessionTitle,
+    projectQuery
+  ],
+  persistWorkbenchState
+);
+
+onMounted(initializeWorkbench);
 </script>
 
 <style scoped>

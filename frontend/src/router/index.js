@@ -204,7 +204,7 @@ const routes = [
     path: "/workbench",
     name: "workbench",
     component: () => import("../views/WorkbenchView.vue"),
-    meta: { requiresAuth: true }
+    meta: { requiresAuth: true, keepAlive: true }
   },
   {
     path: "/my-files",
