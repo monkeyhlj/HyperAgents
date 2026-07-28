@@ -132,6 +132,27 @@ def get_skill_frontmatter_description(skill_id: str) -> str:
     description = frontmatter.get("description")
     return str(description or "").strip()
 
+
+def get_skill_package_root(skill_id: str) -> Path:
+    """Return the directory containing the package's primary SKILL.md."""
+    files_root = (SKILL_UPLOADS_ROOT / skill_id / "files").resolve()
+    if not files_root.exists() or not files_root.is_dir():
+        raise FileNotFoundError("Skill files not found")
+
+    candidates = list(files_root.rglob("SKILL.md"))
+    if not candidates:
+        raise FileNotFoundError("SKILL.md not found in uploaded skill package")
+
+    primary = min(candidates, key=lambda p: len(p.relative_to(files_root).parts))
+    return primary.parent.resolve()
+
+
+def get_skill_uploaded_files_root(skill_id: str) -> Path:
+    files_root = (SKILL_UPLOADS_ROOT / skill_id / "files").resolve()
+    if not files_root.exists() or not files_root.is_dir():
+        raise FileNotFoundError("Skill files not found")
+    return files_root
+
 def delete_skill_artifacts(skill_id: str) -> None:
     """Delete persisted skill upload files and manifest for a skill resource."""
     skill_dir = SKILL_UPLOADS_ROOT / skill_id

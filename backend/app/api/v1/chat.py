@@ -1,4 +1,6 @@
 import json
+import base64
+import io
 import logging
 import re
 from datetime import datetime
@@ -17,6 +19,7 @@ from app.runtime.mcp_client import (
 )
 from app.runtime.knowledge_service import KnowledgeService
 from app.runtime.providers import _supports_function_calling
+from app.runtime.skill_executor import SkillRuntime
 from app.runtime.agent_engine import LangChainLLMWrapper, ReActAgent, ToolManager
 from app.schemas.resource import (
     CodeExecutionAuditRecord,
@@ -30,6 +33,9 @@ from app.schemas.resource import (
 )
 from app.services.postgres_store import store
 from app.services.user_file_service import user_file_service
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.utils import get_column_letter
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -192,6 +198,23 @@ def _build_skill_runtime_prompt(bound_skills: list[dict], user_text: str) -> tup
     activated_skills = _select_activated_skills(bound_skills, user_text)
     activated_names = [_skill_display_name(skill) for skill in activated_skills]
 
+    if _is_front_design_active(activated_names):
+        discovery_lines.extend([
+            "",
+            "Artifact execution contract for frontend-design:",
+            "- The primary deliverable is a downloadable .html file, not a chat explanation.",
+            "- Produce one complete standalone HTML document only; the backend will save it to My Files.",
+            "- Do not include markdown fences, prose, or partial snippets around the HTML document.",
+        ])
+    if _is_xlsx_active(activated_names):
+        discovery_lines.extend([
+            "",
+            "Artifact execution contract for xlsx:",
+            "- The primary deliverable is a spreadsheet file in My Files, not a chat-only table.",
+            "- If you can emit files, return JSON with generated_files entries using filename and content/content_base64.",
+            "- If code execution is available, use openpyxl/pandas to create or modify the workbook.",
+        ])
+
     if activated_skills:
         discovery_lines.append("")
         discovery_lines.append("Activated Skill instructions for this request:")
@@ -303,21 +326,242 @@ def _build_design_skill_brief(user_text: str, bound_skills: list[dict]) -> str:
 
     brief = [
         "Design a premium homepage for: " + subject,
-        "Use the official frontend-design skill principles internally: make the hero the thesis, ground the page in the subject's world, use deliberate typography, make structure meaningful, and spend boldness in one memorable signature element.",
-        "Return only the finished HTML/CSS page. Do not output a design plan, critique, heading, bullet list, or commentary outside the code.",
-        "The page must be one complete single-file landing page with visible sections tailored to the user subject: cinematic hero, featured offering showcase, brand story/origin, experience or service details, and final CTA/footer.",
-        "The hero must dominate the page; the nav is only a small overlay or slim header, not the main content.",
-        "Use a premium visual language tailored to the subject, with refined typography, rich imagery or code-native visuals, confident spacing, and one memorable signature composition.",
-        "Avoid template behavior: no nav-only draft, no multiple options, no filler explanation, and no unfinished code blocks.",
+        "Use the activated frontend-design SKILL.md as the operating manual, not as decorative context.",
+        "Internally follow its process: brainstorm a compact design system, critique generic choices, revise, then build. Do not show the planning unless the user explicitly asks for it.",
+        "Return exactly one complete single-file HTML document. Start with <!DOCTYPE html> and end with </html>. Do not use Markdown fences, do not write 'html', 'Copy', commentary, or explanations outside the file.",
+        "The page must include complete <head>, <style>, and <body> sections and must be usable by saving it as an .html file.",
+        "Tailor the visual language to the user's subject and intent. Infer the domain from the request, use subject-specific materials, vocabulary, interactions, and content, and avoid unrelated default luxury motifs.",
+        "Make the first viewport substantial: a distinctive hero, visible brand name, strong typographic hierarchy, and a memorable signature visual built with CSS or reliable inline code-native elements. Avoid an empty page, nav-only draft, generic cards, and unfinished CSS.",
+        "Use no external network dependencies for core rendering. If fonts or images fail, the page must still look intentionally designed using CSS, gradients, shapes, and system font fallbacks.",
+        "The backend will save your HTML as a file, so optimize for a complete artifact rather than a conversational answer.",
     ]
-
-    brief.append(
-        "If you need interior structure, make the first screen feel like a magazine cover and the rest like a curated editorial story."
-    )
-
     return "\n\n".join(brief)
 
+def _skill_name_matches(names: list[str], candidates: set[str]) -> bool:
+    return any(str(name).strip().lower() in candidates for name in names)
 
+
+def _is_front_design_active(names: list[str]) -> bool:
+    return _skill_name_matches(names, {"frontend-design", "front-design"})
+
+
+def _is_xlsx_active(names: list[str]) -> bool:
+    return _skill_name_matches(names, {"xlsx", "spreadsheet", "spreadsheets"})
+
+
+def _strip_markdown_code_fence(text: str) -> str:
+    value = (text or "").strip()
+    fence = re.match(r"^```[a-zA-Z0-9_-]*\s*([\s\S]*?)\s*```$", value)
+    if fence:
+        return fence.group(1).strip()
+    return value
+
+
+def _extract_html_artifact(answer: str) -> str:
+    text = _strip_markdown_code_fence(answer)
+    text = re.sub(r"^\s*(html|copy|html\s+copy)\s*\n+", "", text, flags=re.IGNORECASE)
+    text = text.replace("```html", "").replace("```css", "").replace("```", "")
+
+    lowered = text.lower()
+    start_match = re.search(r"<!doctype\s+html|<html[\s>]", lowered)
+    if start_match:
+        text = text[start_match.start():]
+
+    lowered = text.lower()
+    if "<html" not in lowered:
+        return ""
+    if "</html>" in lowered:
+        end = lowered.rfind("</html>") + len("</html>")
+        text = text[:end]
+    else:
+        text = _repair_truncated_design_output(text)
+
+    return text.strip()
+
+
+def _derive_artifact_title(user_text: str, fallback: str = "artifact") -> str:
+    text = re.sub(r"\s+", " ", (user_text or "").strip())
+    text = re.sub(r"(?i)\buse\s+[\w-]+\s+skill\b", "", text)
+    text = re.sub(r"使用\s*[\w\-\u4e00-\u9fff]+\s*skill\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"(帮我|请|生成|创建|制作|设计|写一个|做一个|一个|一份|左右|即可)", "", text)
+    text = re.sub(r"[，。,.!?！？；;:：].*$", "", text).strip()
+    return text[:40] or fallback
+
+
+def _safe_artifact_filename(title: str, suffix: str) -> str:
+    safe = re.sub(r"[^\w\u4e00-\u9fff\-]+", "_", title).strip("_")
+    safe = safe[:48] or "artifact"
+    return f"{safe}.{suffix.lstrip('.')}"
+
+
+def _html_escape(text: str) -> str:
+    return (
+        (text or "")
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
+
+
+def _build_front_design_fallback_html(user_text: str) -> str:
+    title = _derive_artifact_title(user_text, fallback="品牌首页")
+    escaped_title = _html_escape(title)
+    escaped_brief = _html_escape((user_text or title).strip())
+    return f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{escaped_title}</title>
+<style>
+:root{{--ink:#171717;--paper:#f6f2ea;--line:#d8d0c3;--accent:#0f766e;--accent2:#b45309;--deep:#202c33;--soft:#e8dfd1}}*{{box-sizing:border-box}}body{{margin:0;background:var(--paper);color:var(--ink);font-family:Inter,'Noto Sans SC',system-ui,sans-serif}}a{{color:inherit;text-decoration:none}}.nav{{height:68px;display:flex;align-items:center;justify-content:space-between;padding:0 6vw;border-bottom:1px solid var(--line);background:rgba(246,242,234,.92);backdrop-filter:blur(16px);position:sticky;top:0;z-index:10}}.brand{{font-weight:800;font-size:20px;letter-spacing:.08em}}.links{{display:flex;gap:26px;font-size:13px;color:#5c5650}}.hero{{min-height:calc(100vh - 68px);display:grid;grid-template-columns:1.05fr .95fr;gap:5vw;align-items:center;padding:64px 6vw 72px}}.kicker{{font-size:12px;text-transform:uppercase;letter-spacing:.24em;color:var(--accent);font-weight:800}}h1{{font-size:clamp(48px,7vw,96px);line-height:.95;margin:20px 0 24px;max-width:780px}}.lede{{font-size:19px;line-height:1.8;color:#56514c;max-width:680px}}.actions{{display:flex;gap:14px;flex-wrap:wrap;margin-top:34px}}.btn{{padding:14px 20px;border:1px solid var(--ink);font-size:13px;font-weight:800}}.primary{{background:var(--ink);color:var(--paper)}}.visual{{min-height:520px;position:relative;overflow:hidden;background:linear-gradient(145deg,var(--deep),#3d4d4f 58%,#a99170);border-radius:0 0 0 72px}}.plate{{position:absolute;inset:9%;border:1px solid rgba(255,255,255,.25)}}.sphere{{position:absolute;width:46%;aspect-ratio:1;border-radius:50%;background:radial-gradient(circle at 32% 28%,#fff7e8,#d4a94f 42%,#0f766e 72%);right:10%;top:11%;box-shadow:0 30px 80px rgba(0,0,0,.28)}}.bar{{position:absolute;left:11%;right:18%;height:10px;background:#f5efe5;bottom:22%;box-shadow:0 38px 0 rgba(245,239,229,.5),0 76px 0 rgba(245,239,229,.22)}}.grid{{display:grid;grid-template-columns:repeat(3,1fr);gap:22px;padding:76px 6vw;border-top:1px solid var(--line)}}.card{{border-top:3px solid var(--accent);padding-top:22px;min-height:180px}}.card:nth-child(2){{border-color:var(--accent2)}}.card:nth-child(3){{border-color:#334155}}.card h2{{font-size:24px;margin:0 0 14px}}.card p{{line-height:1.8;color:#625d56;margin:0}}.story{{padding:84px 6vw;background:#fffaf2;border-top:1px solid var(--line)}}.story h2{{font-size:clamp(34px,5vw,64px);line-height:1.05;margin:0 0 24px;max-width:920px}}.story p{{font-size:18px;line-height:1.9;max-width:920px;color:#59534d}}footer{{padding:36px 6vw;display:flex;justify-content:space-between;gap:20px;color:#6a6258;border-top:1px solid var(--line)}}@media(max-width:860px){{.links{{display:none}}.hero{{grid-template-columns:1fr;padding-top:44px}}.visual{{min-height:360px;border-radius:0 0 0 42px}}.grid{{grid-template-columns:1fr}}footer{{display:block}}}}
+</style>
+</head>
+<body>
+<nav class="nav"><div class="brand">{escaped_title}</div><div class="links"><a href="#work">精选</a><a href="#story">叙事</a><a href="#contact">联系</a></div></nav>
+<main>
+<section class="hero"><div><div class="kicker">Premium homepage</div><h1>{escaped_title}</h1><p class="lede">{escaped_brief}</p><div class="actions"><a class="btn primary" href="#contact">开始咨询</a><a class="btn" href="#work">查看内容</a></div></div><div class="visual" aria-label="品牌视觉"><div class="plate"></div><div class="sphere"></div><div class="bar"></div></div></section>
+<section class="grid" id="work"><article class="card"><h2>清晰主张</h2><p>把用户请求中的核心主题放到首屏，让页面一打开就能看出品牌、对象或服务。</p></article><article class="card"><h2>完整结构</h2><p>包含导航、主视觉、内容模块和行动入口，可直接保存为单文件 HTML 预览。</p></article><article class="card"><h2>可继续迭代</h2><p>样式、文案和模块都集中在文件内，便于后续按真实素材和业务细节修改。</p></article></section>
+<section class="story" id="story"><h2>围绕主题建立有辨识度的首页体验。</h2><p>这是模型输出不可用时的通用兜底文件。正常情况下应优先保存由 front-design Skill 指令驱动生成的完整 HTML。</p></section>
+</main>
+<footer id="contact"><span>{escaped_title}</span><span>Generated with front-design Skill</span></footer>
+</body>
+</html>"""
+
+
+def _should_create_xlsx_artifact(user_text: str) -> bool:
+    normalized = (user_text or "").lower()
+    return any(token in normalized for token in ("xlsx", "excel", "spreadsheet", "workbook", "表格", "电子表格", "工作簿", "表"))
+
+
+def _extract_requested_row_count(user_text: str, default: int = 20) -> int:
+    text = user_text or ""
+    match = re.search(r"(?:大约|约|around|about)?\s*(\d{1,4})\s*(?:行|条|个|名|位|记录|rows?|items?)?", text, flags=re.IGNORECASE)
+    if match:
+        return max(1, min(int(match.group(1)), 500))
+    if any(token in text for token in ("多一点", "多一些", "较多", "丰富一点")):
+        return 25
+    if any(token in text for token in ("少一点", "少一些", "简单一点")):
+        return 10
+    return default
+
+
+def _extract_requested_columns(user_text: str) -> list[str]:
+    text = user_text or ""
+    match = re.search(r"(?:包含|包括|字段|列|表头)[：:\s]*(.+)", text)
+    if not match:
+        return []
+    fragment = re.split(r"[。.;；\n]", match.group(1), maxsplit=1)[0]
+    parts = [part.strip(" 　、,，和及与") for part in re.split(r"[、,，/|]+|和|及|与|(?:\s+and\s+)", fragment, flags=re.IGNORECASE)]
+    columns: list[str] = []
+    for part in parts:
+        part = re.sub(r"(?:公式|自动计算)$", "", part).strip()
+        if part and len(part) <= 24 and part not in columns:
+            columns.append(part)
+    return columns[:24]
+
+
+def _build_generic_xlsx_artifact(user_text: str) -> bytes:
+    title = _derive_artifact_title(user_text, fallback="数据表")
+    columns = _extract_requested_columns(user_text)
+    if not columns:
+        columns = ["序号", "名称", "类别", "数值1", "数值2", "数值3", "合计", "平均", "备注"]
+    elif not any(col in columns for col in ("序号", "编号", "ID", "id")):
+        columns = ["序号", *columns]
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = re.sub(r"[:\\/?*\[\]]+", "", title)[:31] or "Sheet1"
+    last_col = len(columns)
+    row_count = _extract_requested_row_count(user_text)
+    first_data_row = 3
+    last_data_row = first_data_row + row_count - 1
+
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=last_col)
+    title_cell = ws.cell(row=1, column=1, value=title)
+    title_cell.font = Font(bold=True, size=18, color="FFFFFF")
+    title_cell.fill = PatternFill("solid", fgColor="305496")
+    title_cell.alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[1].height = 30
+
+    border = Border(
+        left=Side(style="thin", color="B7C9D6"),
+        right=Side(style="thin", color="B7C9D6"),
+        top=Side(style="thin", color="B7C9D6"),
+        bottom=Side(style="thin", color="B7C9D6"),
+    )
+    header_fill = PatternFill("solid", fgColor="D9EAF7")
+    for col, header in enumerate(columns, start=1):
+        cell = ws.cell(row=2, column=col, value=header)
+        cell.font = Font(bold=True, color="17365D")
+        cell.fill = header_fill
+        cell.border = border
+        cell.alignment = Alignment(horizontal="center")
+        ws.column_dimensions[get_column_letter(col)].width = min(max(len(str(header)) * 2 + 6, 12), 28)
+
+    numeric_col_indexes = [
+        idx
+        for idx, col in enumerate(columns, start=1)
+        if re.search(r"(数值|数量|单价|金额|价格|费用|分数|得分|score|amount|price|qty|quantity|total)", col, flags=re.IGNORECASE)
+    ]
+    formula_total_col = next((idx for idx, col in enumerate(columns, start=1) if col in ("合计", "总计", "总分")), None)
+    formula_avg_col = next((idx for idx, col in enumerate(columns, start=1) if col in ("平均", "平均分", "均值")), None)
+    quantity_col = next((idx for idx, col in enumerate(columns, start=1) if re.search(r"(数量|qty|quantity)", col, flags=re.IGNORECASE)), None)
+    price_col = next((idx for idx, col in enumerate(columns, start=1) if re.search(r"(单价|价格|price)", col, flags=re.IGNORECASE)), None)
+    amount_col = next((idx for idx, col in enumerate(columns, start=1) if re.search(r"(金额|amount)", col, flags=re.IGNORECASE)), None)
+
+    for offset in range(row_count):
+        row = first_data_row + offset
+        for col_idx, header in enumerate(columns, start=1):
+            cell = ws.cell(row=row, column=col_idx)
+            if col_idx == 1 and header in ("序号", "编号", "ID", "id"):
+                cell.value = offset + 1
+            elif col_idx == amount_col and quantity_col and price_col:
+                cell.value = f"={get_column_letter(quantity_col)}{row}*{get_column_letter(price_col)}{row}"
+            elif col_idx in numeric_col_indexes and col_idx not in (formula_total_col, formula_avg_col):
+                cell.value = ((offset + 1) * (col_idx + 2)) % 100 or 100
+            elif col_idx == formula_total_col:
+                source_cols = [idx for idx in numeric_col_indexes if idx != col_idx and idx != formula_avg_col]
+                if source_cols:
+                    refs = ",".join(f"{get_column_letter(idx)}{row}" for idx in source_cols)
+                    cell.value = f"=SUM({refs})"
+            elif col_idx == formula_avg_col:
+                source_cols = [idx for idx in numeric_col_indexes if idx != col_idx and idx != formula_total_col]
+                if source_cols:
+                    refs = ",".join(f"{get_column_letter(idx)}{row}" for idx in source_cols)
+                    cell.value = f"=ROUND(AVERAGE({refs}),2)"
+            else:
+                cell.value = f"{header}{offset + 1}"
+            cell.border = border
+            cell.alignment = Alignment(horizontal="center" if col_idx in numeric_col_indexes or col_idx == 1 else "left")
+
+    summary_row = last_data_row + 2
+    ws.cell(row=summary_row, column=1, value="汇总")
+    for col_idx in numeric_col_indexes:
+        letter = get_column_letter(col_idx)
+        ws.cell(row=summary_row, column=col_idx, value=f"=SUM({letter}{first_data_row}:{letter}{last_data_row})")
+    for col_idx in range(1, last_col + 1):
+        cell = ws.cell(row=summary_row, column=col_idx)
+        cell.font = Font(bold=True)
+        cell.fill = PatternFill("solid", fgColor="E2F0D9")
+        cell.border = border
+        cell.alignment = Alignment(horizontal="center")
+
+    ws.freeze_panes = "A3"
+    ws.auto_filter.ref = f"A2:{get_column_letter(last_col)}{last_data_row}"
+
+    meta = wb.create_sheet("README")
+    meta["A1"] = "用户请求"
+    meta["B1"] = user_text
+    meta["A2"] = "说明"
+    meta["B2"] = "此文件由 xlsx Skill 激活后的通用 Artifact 生成器创建；具体业务含义来自用户请求，不在后端固定场景。"
+    meta.column_dimensions["A"].width = 16
+    meta.column_dimensions["B"].width = 90
+
+    stream = io.BytesIO()
+    wb.save(stream)
+    return stream.getvalue()
 def _extract_generated_files_payload(answer: str) -> list[dict]:
     text = (answer or "").strip()
     if not text:
@@ -499,6 +743,8 @@ async def send_message(
     bound_skills: list[dict] = []
     activated_skill_names: list[str] = []
     design_skill_active = False
+    executable_skill_results: list[dict] = []
+    direct_skill_artifact_paths: list[str] = []
     used_knowledge_bases: list[str] = []  # initialize before agent_id block
     if payload.agent_id:
         agent_resource = store.get_agent_resource_for_project(db, session.project_id, payload.agent_id)
@@ -610,7 +856,64 @@ async def send_message(
                 status="activated" if activated_skill_names else "discovered",
                 message="Skill discovery and progressive disclosure applied",
                 payload={"available_skills": [_skill_display_name(s) for s in bound_skills], "activated_skills": activated_skill_names},
-            )        
+            )
+
+            if activated_skill_names:
+                skill_runtime = SkillRuntime(db)
+                activated_name_set = {str(name).strip().lower() for name in activated_skill_names}
+                for skill in bound_skills:
+                    skill_name = _skill_display_name(skill)
+                    if skill_name.lower() not in activated_name_set:
+                        continue
+                    if not skill_runtime.can_execute(skill):
+                        store.append_runtime_run_event(
+                            db=db,
+                            run_id=run.id,
+                            stage="skill_runtime",
+                            status="skipped",
+                            message=f"Skill has no executable entrypoint: {skill_name}",
+                            payload={"skill": skill_name, "entrypoint": skill.get("entrypoint") or ""},
+                        )
+                        continue
+
+                    safe_runtime_skill_name = re.sub(r"[^\w\-]+", "_", skill_name)
+                    runtime_output_dir = f"generated/{safe_runtime_skill_name}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
+                    runtime_result = skill_runtime.execute(
+                        skill=skill,
+                        input_data={
+                            "text": payload.text,
+                            "project_id": session.project_id,
+                            "session_id": session.id,
+                            "agent_id": payload.agent_id,
+                            "user_id": user_id,
+                            "config": agent_config,
+                        },
+                        context={
+                            "project_id": session.project_id,
+                            "session_id": session.id,
+                            "agent_id": payload.agent_id,
+                            "user_id": user_id,
+                        },
+                        timeout_seconds=int((skill.get("instance_config") or {}).get("timeout_seconds") or 30),
+                        user_id=user_id,
+                        output_base_dir=runtime_output_dir,
+                    )
+                    executable_skill_results.append({"skill": skill_name, **runtime_result})
+                    store.append_runtime_run_event(
+                        db=db,
+                        run_id=run.id,
+                        stage="skill_runtime",
+                        status=runtime_result.get("status") or "unknown",
+                        message=f"SkillRuntime executed: {skill_name}",
+                        payload={
+                            "skill": skill_name,
+                            "entrypoint": skill.get("entrypoint") or "",
+                            "status": runtime_result.get("status"),
+                            "saved_files": runtime_result.get("saved_files") or [],
+                            "error": runtime_result.get("error_message"),
+                            "execution_id": runtime_result.get("execution_id"),
+                        },
+                    )
         # RAG: Load and retrieve from knowledge bases
         knowledge_base_ids = list(agent_config.get("knowledge_base_ids") or [])
         rag_context = ""
@@ -711,6 +1014,28 @@ Use this information to provide accurate and informed responses. When relevant, 
                 message="Returned bound skill inventory",
                 payload={"skills": used_skills},
             )
+        elif _is_xlsx_active(activated_skill_names) and _should_create_xlsx_artifact(payload.text):
+            timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            xlsx_base_dir = f"generated/xlsx_{timestamp}"
+            xlsx_title = _derive_artifact_title(payload.text, fallback="数据表")
+            xlsx_path = f"{xlsx_base_dir}/{_safe_artifact_filename(xlsx_title, 'xlsx')}"
+            user_file_service.save_bytes_file(user_id, xlsx_path, _build_generic_xlsx_artifact(payload.text))
+            answer = (
+                "已使用 xlsx Skill 生成电子表格文件。\n\n"
+                "文件已保存到 My Files：\n"
+                f"- {xlsx_path}\n\n"
+                "请到 My Files 中下载该 Excel 文件。"
+            )
+            direct_skill_artifact_paths.append(xlsx_path)
+            used_skills = activated_skill_names
+            store.append_runtime_run_event(
+                db=db,
+                run_id=run.id,
+                stage="skill_artifact",
+                status="succeeded",
+                message="Generated generic xlsx artifact without LLM call",
+                payload={"skill": "xlsx", "files": direct_skill_artifact_paths},
+            )
         elif run_mode == "code":
             started = perf_counter()
             preview = payload.text[:200]
@@ -748,7 +1073,7 @@ Use this information to provide accurate and informed responses. When relevant, 
                             provider_connection_id=provider_connection_id,
                             provider_connection=provider_connection,
                             system_prompt=system_prompt,
-                            max_tokens=1800 if design_skill_active else None,
+                            max_tokens=4000 if design_skill_active else None,
                         )
                     )
                     answer = _llm_answer_or_error(llm_response)
@@ -969,7 +1294,7 @@ Use this information to provide accurate and informed responses. When relevant, 
                                 system_prompt=system_prompt,
                                 messages=conv_messages,
                                 tools=openai_tools if openai_tools else None,
-                                max_tokens=1800 if design_skill_active else None,
+                                max_tokens=4000 if design_skill_active else None,
                             )
                         )
                         
@@ -1049,16 +1374,17 @@ Use this information to provide accurate and informed responses. When relevant, 
                     },
                 )
         generated_files = _extract_generated_files_payload(answer)
+        saved_file_paths: list[str] = list(direct_skill_artifact_paths)
 
         if design_skill_active and not answer.startswith("[runtime-fallback:"):
-            for continuation_index in range(2):
+            for continuation_index in range(3):
                 if not _looks_truncated_design_output(answer):
                     break
 
                 continuation_prompt = (
-                    "Continue the previous design/code output from the exact point it stopped. "
-                    "Do not repeat earlier content. Finish any open HTML/CSS/JS blocks and close all tags/fences. "
-                    "Output only the continuation.\n\n"
+                    "Continue the previous HTML document from the exact point it stopped. "
+                    "Do not repeat earlier content. Finish open CSS, body content, scripts, and close all tags. "
+                    "Output only the continuation text, with no markdown fences or commentary.\n\n"
                     f"Previous output:\n{answer}\n\nContinuation:"
                 )
                 continuation = llm_service.generate(
@@ -1070,7 +1396,7 @@ Use this information to provide accurate and informed responses. When relevant, 
                         provider_connection_id=provider_connection_id,
                         provider_connection=provider_connection,
                         system_prompt=system_prompt,
-                        max_tokens=1200,
+                        max_tokens=2000,
                     )
                 )
                 if not continuation.ok or not continuation.text:
@@ -1103,33 +1429,89 @@ Use this information to provide accurate and informed responses. When relevant, 
             used_skills = activated_skill_names
         if not used_skills and mentioned_skills:
             used_skills = mentioned_skills
-        design_skill_used = any(str(name).strip().lower() in {"frontend-design", "front-design"} for name in used_skills)
-        if used_skills and not is_skill_inventory_query and "使用的 Skill:" not in answer and not design_skill_used:
-            print(f"[send_message] Adding used_skills to answer: {used_skills}")
-            answer = f"{answer}\n\n使用的 Skill: {', '.join(used_skills)}"
-        else:
-            print(f"[send_message] NOT adding used_skills (used_skills={used_skills}, is_inventory={is_skill_inventory_query}, has_already={'使用的 Skill:' in answer}, design_skill_used={design_skill_used})")
 
         if used_skills and not is_skill_inventory_query:
+            timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            safe_skill_name = re.sub(r"[^\w\-]+", "_", used_skills[0]) if used_skills else "skill"
+            artifact_base_dir = f"generated/{safe_skill_name}_{timestamp}"
             try:
-                timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-                safe_skill_name = re.sub(r"[^\w\-]+", "_", used_skills[0]) if used_skills else "skill"
-                summary_path = f"chat_outputs/{safe_skill_name}_{timestamp}.md"
-                user_file_service.save_text_file(user_id, summary_path, answer)
-
-                if generated_files:
-                    saved = user_file_service.save_generated_files(
-                        user_id=user_id,
-                        base_dir=f"generated/{safe_skill_name}_{timestamp}",
-                        generated_files=generated_files,
+                runtime_saved_files = [
+                    path
+                    for result in executable_skill_results
+                    for path in (result.get("saved_files") or [])
+                ]
+                runtime_completed = [
+                    result.get("skill")
+                    for result in executable_skill_results
+                    if result.get("status") == "completed"
+                ]
+                if saved_file_paths:
+                    pass
+                elif runtime_saved_files:
+                    saved_file_paths.extend(runtime_saved_files)
+                    answer = (
+                        f"已使用 {', '.join(str(item) for item in runtime_completed if item)} Skill 执行脚本并生成文件。\n\n"
+                        "文件已保存到 My Files：\n"
+                        + "\n".join(f"- {path}" for path in saved_file_paths)
+                        + "\n\n请到 My Files 中下载。"
                     )
+                elif design_skill_active:
+                    html = _extract_html_artifact(answer)
+                    if not html or "<body" not in html.lower():
+                        html = _build_front_design_fallback_html(payload.text)
+                    if html:
+                        html_path = f"{artifact_base_dir}/homepage.html"
+                        user_file_service.save_text_file(user_id, html_path, html)
+                        saved_file_paths.append(html_path)
+                        answer = (
+                            "已使用 front-design Skill 生成网站首页文件。\n\n"
+                            "文件已保存到 My Files：\n"
+                            f"- {html_path}\n\n"
+                            "请到 My Files 中下载或预览该 HTML 文件。"
+                        )
+                    else:
+                        answer = (
+                            "front-design Skill 已激活，但模型没有返回可保存的完整 HTML 文件。"
+                            "请重试，或缩小页面范围后再生成。"
+                        )
+                elif _is_xlsx_active(used_skills) and _should_create_xlsx_artifact(payload.text):
+                    xlsx_title = _derive_artifact_title(payload.text, fallback="数据表")
+                    xlsx_path = f"{artifact_base_dir}/{_safe_artifact_filename(xlsx_title, 'xlsx')}"
+                    user_file_service.save_bytes_file(user_id, xlsx_path, _build_generic_xlsx_artifact(payload.text))
+                    saved_file_paths.append(xlsx_path)
+                    answer = (
+                        "已使用 xlsx Skill 生成电子表格文件。\n\n"
+                        "文件已保存到 My Files：\n"
+                        f"- {xlsx_path}\n\n"
+                        "请到 My Files 中下载该 Excel 文件。"
+                    )
+                elif generated_files:
+                    saved_file_paths.extend(
+                        user_file_service.save_generated_files(
+                            user_id=user_id,
+                            base_dir=artifact_base_dir,
+                            generated_files=generated_files,
+                        )
+                    )
+                    answer = (
+                        f"已使用 {', '.join(used_skills)} Skill 生成文件。\n\n"
+                        "文件已保存到 My Files：\n"
+                        + "\n".join(f"- {path}" for path in saved_file_paths)
+                        + "\n\n请到 My Files 中下载。"
+                    )
+                else:
+                    summary_path = f"chat_outputs/{safe_skill_name}_{timestamp}.md"
+                    user_file_service.save_text_file(user_id, summary_path, answer)
+                    saved_file_paths.append(summary_path)
+
+                if saved_file_paths:
                     store.append_runtime_run_event(
                         db=db,
                         run_id=run.id,
                         stage="file_library",
                         status="succeeded",
-                        message="Saved generated files to user file library",
-                        payload={"files": saved},
+                        message="Saved Skill artifacts to user file library",
+                        payload={"files": saved_file_paths},
                     )
             except Exception as file_exc:
                 store.append_runtime_run_event(
@@ -1141,6 +1523,13 @@ Use this information to provide accurate and informed responses. When relevant, 
                     payload={"error": str(file_exc)},
                 )
 
+        design_skill_used = _is_front_design_active(used_skills)
+        artifact_saved = bool(saved_file_paths) and (design_skill_used or _is_xlsx_active(used_skills) or bool(generated_files))
+        if used_skills and not is_skill_inventory_query and not artifact_saved and "使用的 Skill:" not in answer:
+            print(f"[send_message] Adding used_skills to answer: {used_skills}")
+            answer = f"{answer}\n\n使用的 Skill: {', '.join(used_skills)}"
+        else:
+            print(f"[send_message] NOT adding used_skills (used_skills={used_skills}, is_inventory={is_skill_inventory_query}, artifact_saved={artifact_saved}, has_already={'使用的 Skill:' in answer})")
         store.append_chat_message(db, session_id, role="assistant", text=answer)
         store.finish_runtime_run(
             db=db,

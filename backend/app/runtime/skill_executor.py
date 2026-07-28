@@ -1,230 +1,359 @@
-"""Skill execution engine with sandboxing support."""
+"""SkillRuntime: execute uploaded Agent Skill scripts in a constrained local workspace."""
+
+from __future__ import annotations
 
 import asyncio
+import base64
 import json
+import logging
+import os
+import shutil
 import subprocess
 import sys
 import tempfile
-import zipfile
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
-import logging
+from typing import Any
+from uuid import uuid4
 
-from app.db.session import SessionLocal
-from app.db.models import SkillExecutionModel, SkillMetadataModel
-from app.runtime.skill_service import validate_input_output
 from sqlalchemy.orm import Session
+
+from app.db.models import SkillExecutionModel
+from app.runtime.skill_service import get_skill_package_root, validate_input_output
+from app.services.user_file_service import user_file_service
 
 logger = logging.getLogger(__name__)
 
 
-class SkillExecutor:
-    """Execute Skill with sandboxing support"""
-    
-    def __init__(self, skill_id: str, skill_metadata: Dict[str, Any], db: Optional[Session] = None):
-        """
-        Initialize skill executor
-        
-        Args:
-            skill_id: Skill resource ID
-            skill_metadata: Skill metadata dict (from SkillMetadataModel)
-            db: Database session for tracking execution
-        """
-        self.skill_id = skill_id
-        self.metadata = skill_metadata
+_RUNNER_SCRIPT = r'''
+import base64
+import importlib.util
+import inspect
+import json
+import os
+import sys
+from pathlib import Path
+
+
+def _json_default(value):
+    try:
+        from pathlib import Path as _Path
+        if isinstance(value, _Path):
+            return str(value)
+    except Exception:
+        pass
+    return str(value)
+
+
+def _collect_output_files(work_dir):
+    outputs = Path(work_dir) / "outputs"
+    generated = []
+    if not outputs.exists():
+        return generated
+    for path in outputs.rglob("*"):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(outputs).as_posix()
+        generated.append({
+            "filename": rel,
+            "content_base64": base64.b64encode(path.read_bytes()).decode("ascii"),
+        })
+    return generated
+
+
+def _call_entrypoint(func, input_data, context):
+    attempts = [
+        lambda: func(input_data=input_data, context=context),
+        lambda: func(input_data, context),
+        lambda: func(input_data=input_data),
+        lambda: func(input_data),
+        lambda: func(),
+    ]
+    last_error = None
+    for attempt in attempts:
+        try:
+            result = attempt()
+            if inspect.isawaitable(result):
+                raise RuntimeError("Async skill entrypoints are not supported by the local runner yet")
+            return result
+        except TypeError as exc:
+            last_error = exc
+            continue
+    raise last_error or RuntimeError("Unable to call skill entrypoint")
+
+
+def main():
+    payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+    module_path = Path(payload["module_path"])
+    function_name = payload["function_name"]
+    work_dir = payload["work_dir"]
+    input_data = payload.get("input_data") or {}
+    context = payload.get("context") or {}
+
+    os.chdir(work_dir)
+    sys.path.insert(0, work_dir)
+
+    spec = importlib.util.spec_from_file_location("skill_entrypoint", module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Unable to load entrypoint module: {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    func = getattr(module, function_name, None)
+    if not callable(func):
+        raise RuntimeError(f"Entrypoint function not callable: {function_name}")
+
+    output = _call_entrypoint(func, input_data, context)
+    if output is None:
+        output = {}
+    if not isinstance(output, dict):
+        output = {"result": output}
+
+    collected_files = _collect_output_files(work_dir)
+    if collected_files:
+        output.setdefault("generated_files", [])
+        output["generated_files"].extend(collected_files)
+
+    print(json.dumps({"ok": True, "output_data": output}, ensure_ascii=False, default=_json_default))
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False))
+        sys.exit(1)
+'''
+
+
+class SkillRuntime:
+    """Execute the declared Python entrypoint from an uploaded Skill package.
+
+    This runtime is intentionally conservative: it only executes the frontmatter
+    `entrypoint` if the corresponding file exists inside the uploaded Skill
+    package. Skills without an executable entrypoint remain instruction-only.
+    """
+
+    def __init__(self, db: Session | None = None):
         self.db = db
-        self.temp_dir = None
-    
-    async def execute(
+
+    def can_execute(self, skill: dict) -> bool:
+        try:
+            self._resolve_entrypoint(skill)
+            return True
+        except Exception:
+            return False
+
+    def execute(
         self,
-        input_data: Dict[str, Any],
-        execution_id: Optional[str] = None,
+        *,
+        skill: dict,
+        input_data: dict[str, Any],
+        context: dict[str, Any] | None = None,
         timeout_seconds: int = 30,
-    ) -> Dict[str, Any]:
-        """
-        Execute skill with provided input
-        
-        Args:
-            input_data: Input dict (must conform to input_schema)
-            execution_id: Optional execution record ID (for tracking)
-            timeout_seconds: Max execution time (default 30s)
-            
-        Returns:
-            Dict with status, output_data, and error_message (if any)
-        """
-        # Validate input against schema
+        user_id: str | None = None,
+        output_base_dir: str | None = None,
+    ) -> dict[str, Any]:
+        skill_id = str(skill.get("skill_id") or "")
+        started = datetime.utcnow()
+        execution_id = self._create_execution(skill, input_data)
+
         try:
-            validate_input_output(input_data, self.metadata.get("input_schema"))
-        except ValueError as e:
-            return {
-                "status": "failed",
-                "error_message": f"Input validation failed: {str(e)}"
-            }
-        
+            validate_input_output(input_data, skill.get("input_schema") or {})
+        except ValueError as exc:
+            result = {"status": "failed", "error_message": f"Input validation failed: {exc}"}
+            self._finish_execution(execution_id, "failed", error_message=result["error_message"], started=started)
+            return result
+
         try:
-            # Extract and setup skill code
-            skill_dir = await self._extract_skill()
-            
-            # Execute skill code
-            output_data = await self._execute_in_sandbox(
-                skill_dir,
-                input_data,
-                timeout_seconds
+            package_root, module_path, function_name = self._resolve_entrypoint(skill)
+        except Exception as exc:
+            result = {"status": "skipped", "reason": str(exc), "output_data": {}}
+            self._finish_execution(execution_id, "completed", output_data=result, started=started)
+            return result
+
+        temp_dir = Path(tempfile.mkdtemp(prefix=f"skill_{skill_id}_"))
+        try:
+            work_dir = temp_dir / "work"
+            shutil.copytree(package_root, work_dir)
+            runner_path = temp_dir / "runner.py"
+            payload_path = temp_dir / "payload.json"
+            runner_path.write_text(_RUNNER_SCRIPT, encoding="utf-8")
+
+            runtime_context = dict(context or {})
+            runtime_context.update(
+                {
+                    "skill_id": skill_id,
+                    "skill_name": skill.get("name") or skill_id,
+                    "work_dir": str(work_dir),
+                    "outputs_dir": str(work_dir / "outputs"),
+                }
             )
-            
-            # Validate output against schema
+            (work_dir / "outputs").mkdir(parents=True, exist_ok=True)
+
+            payload = {
+                "module_path": str(work_dir / module_path.relative_to(package_root)),
+                "function_name": function_name,
+                "work_dir": str(work_dir),
+                "input_data": input_data,
+                "context": runtime_context,
+            }
+            payload_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+            proc = subprocess.run(
+                [sys.executable, str(runner_path), str(payload_path)],
+                cwd=str(work_dir),
+                text=True,
+                capture_output=True,
+                timeout=timeout_seconds,
+            )
+
+            stdout = (proc.stdout or "").strip()
+            stderr = (proc.stderr or "").strip()
+            parsed = self._parse_runner_stdout(stdout)
+            if proc.returncode != 0 or not parsed.get("ok"):
+                error = parsed.get("error") or stderr or stdout or f"Skill process exited with {proc.returncode}"
+                result = {"status": "failed", "error_message": error, "stdout": stdout, "stderr": stderr}
+                self._finish_execution(execution_id, "failed", error_message=error, started=started)
+                return result
+
+            output_data = parsed.get("output_data") or {}
             try:
-                validate_input_output(output_data, self.metadata.get("output_schema"))
-            except ValueError as e:
-                logger.warning(f"Output validation warning: {e}")
-            
+                validate_input_output(output_data, skill.get("output_schema") or {})
+            except ValueError as exc:
+                logger.warning("Skill output validation warning: %s", exc)
+
+            saved_files: list[str] = []
+            generated_files = output_data.get("generated_files")
+            if user_id and output_base_dir and isinstance(generated_files, list):
+                saved_files = user_file_service.save_generated_files(user_id, output_base_dir, generated_files)
+                output_data["saved_files"] = saved_files
+
             result = {
                 "status": "completed",
                 "output_data": output_data,
+                "saved_files": saved_files,
+                "stdout": stdout,
+                "stderr": stderr,
+                "execution_id": execution_id,
             }
-            
-            # Record execution
-            if execution_id and self.db:
-                await self._record_execution(execution_id, "completed", output_data)
-            
+            self._finish_execution(execution_id, "completed", output_data=output_data, started=started)
             return result
-            
-        except asyncio.TimeoutError:
-            error_msg = f"Skill execution timeout after {timeout_seconds}s"
-            if execution_id and self.db:
-                await self._record_execution(execution_id, "failed", error_message=error_msg)
-            return {
-                "status": "failed",
-                "error_message": error_msg
-            }
-        except Exception as e:
-            error_msg = f"Skill execution failed: {str(e)}"
-            logger.error(error_msg, exc_info=True)
-            if execution_id and self.db:
-                await self._record_execution(execution_id, "failed", error_message=error_msg)
-            return {
-                "status": "failed",
-                "error_message": error_msg
-            }
+        except subprocess.TimeoutExpired:
+            error = f"Skill execution timeout after {timeout_seconds}s"
+            self._finish_execution(execution_id, "failed", error_message=error, started=started)
+            return {"status": "failed", "error_message": error, "execution_id": execution_id}
+        except Exception as exc:
+            error = f"Skill execution failed: {exc}"
+            logger.error(error, exc_info=True)
+            self._finish_execution(execution_id, "failed", error_message=error, started=started)
+            return {"status": "failed", "error_message": error, "execution_id": execution_id}
         finally:
-            # Cleanup
-            if self.temp_dir:
-                import shutil
-                shutil.rmtree(self.temp_dir, ignore_errors=True)
-    
-    async def _extract_skill(self) -> str:
-        """
-        Extract skill code to temp directory
-        
-        TODO: Implement actual skill extraction from storage (local/git/s3)
-        For now, returns placeholder path
-        """
-        self.temp_dir = tempfile.mkdtemp()
-        return self.temp_dir
-    
-    async def _execute_in_sandbox(
-        self,
-        skill_dir: str,
-        input_data: Dict[str, Any],
-        timeout_seconds: int,
-    ) -> Dict[str, Any]:
-        """
-        Execute skill code in isolated environment
-        
-        Currently supports:
-        - Python venv execution (TODO: docker support)
-        
-        Args:
-            skill_dir: Directory containing skill code
-            input_data: Input parameters
-            timeout_seconds: Execution timeout
-            
-        Returns:
-            Output data from skill execution
-        """
-        # TODO: Implement proper sandboxing
-        # For MVP: Direct execution with validation
-        
-        # Parse entrypoint: "scripts/main:execute"
-        entrypoint = self.metadata.get("entrypoint", "scripts/main:execute")
-        module_path, func_name = entrypoint.split(":")
-        module_name = module_path.replace("/", ".").replace(".py", "")
-        
-        # TODO: Create isolated venv, install requirements, execute
-        # For now, return mock result
-        
-        logger.info(f"[Skill] Executing {self.skill_id} with entrypoint {entrypoint}")
-        
-        # Mock execution (should be replaced with actual sandbox)
-        return {
-            "status": "mock",
-            "message": "Skill execution not yet implemented",
-            "input": input_data
-        }
-    
-    async def _record_execution(
-        self,
-        execution_id: str,
-        status: str,
-        output_data: Optional[Dict[str, Any]] = None,
-        error_message: Optional[str] = None,
-    ):
-        """Record skill execution in database"""
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def _resolve_entrypoint(self, skill: dict) -> tuple[Path, Path, str]:
+        skill_id = str(skill.get("skill_id") or "")
+        if not skill_id:
+            raise ValueError("Skill id is missing")
+
+        entrypoint = str(skill.get("entrypoint") or "").strip()
+        if not entrypoint or ":" not in entrypoint:
+            raise ValueError("Skill has no executable entrypoint")
+
+        module_part, function_name = entrypoint.split(":", 1)
+        function_name = function_name.strip()
+        module_rel = module_part.strip().replace("\\", "/")
+        if not module_rel or not function_name:
+            raise ValueError("Skill entrypoint is incomplete")
+        if ".." in Path(module_rel).parts:
+            raise ValueError("Skill entrypoint escapes package")
+        if not module_rel.endswith(".py"):
+            module_rel = f"{module_rel}.py"
+
+        package_root = get_skill_package_root(skill_id)
+        module_path = (package_root / module_rel).resolve()
+        try:
+            module_path.relative_to(package_root)
+        except ValueError as exc:
+            raise ValueError("Skill entrypoint escapes package") from exc
+        if not module_path.exists() or not module_path.is_file():
+            raise FileNotFoundError(f"Skill entrypoint file not found: {module_rel}")
+        return package_root, module_path, function_name
+
+    @staticmethod
+    def _parse_runner_stdout(stdout: str) -> dict[str, Any]:
+        if not stdout:
+            return {}
+        for line in reversed(stdout.splitlines()):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                data = json.loads(line)
+                if isinstance(data, dict):
+                    return data
+            except Exception:
+                continue
+        return {}
+
+    def _create_execution(self, skill: dict, input_data: dict[str, Any]) -> str | None:
         if not self.db:
+            return None
+        try:
+            execution = SkillExecutionModel(
+                id=str(uuid4()),
+                skill_id=str(skill.get("skill_id")),
+                agent_id=str(input_data.get("agent_id") or "") or None,
+                project_id=str(input_data.get("project_id") or skill.get("project_id") or ""),
+                session_id=str(input_data.get("session_id") or "") or None,
+                status="running",
+                input_data=input_data,
+                started_at=datetime.utcnow(),
+            )
+            self.db.add(execution)
+            self.db.commit()
+            return execution.id
+        except Exception:
+            logger.warning("Failed to create skill execution record", exc_info=True)
+            self.db.rollback()
+            return None
+
+    def _finish_execution(
+        self,
+        execution_id: str | None,
+        status: str,
+        *,
+        output_data: dict[str, Any] | None = None,
+        error_message: str | None = None,
+        started: datetime | None = None,
+    ) -> None:
+        if not self.db or not execution_id:
             return
-        
-        execution = self.db.query(SkillExecutionModel).filter(
-            SkillExecutionModel.id == execution_id
-        ).first()
-        
-        if execution:
+        try:
+            execution = self.db.get(SkillExecutionModel, execution_id)
+            if not execution:
+                return
+            completed = datetime.utcnow()
             execution.status = status
             execution.output_data = output_data
             execution.error_message = error_message
+            execution.completed_at = completed
+            if started:
+                execution.execution_time_ms = int((completed - started).total_seconds() * 1000)
             self.db.commit()
-            logger.info(f"[Skill] Recorded execution {execution_id}: {status}")
+        except Exception:
+            logger.warning("Failed to finish skill execution record", exc_info=True)
+            self.db.rollback()
 
 
-# Placeholder for future implementations
-
-class PythonVenvExecutor(SkillExecutor):
-    """Execute Skill in isolated Python virtual environment"""
-    
-    async def _execute_in_sandbox(
-        self,
-        skill_dir: str,
-        input_data: Dict[str, Any],
-        timeout_seconds: int,
-    ) -> Dict[str, Any]:
-        """
-        Execute skill in Python venv
-        
-        TODO: Implementation
-        - Create temporary venv
-        - Install requirements
-        - Execute entrypoint
-        - Capture stdout/stderr
-        - Cleanup venv
-        """
-        pass
+# Backwards-compatible class names for existing imports.
+class SkillExecutor(SkillRuntime):
+    pass
 
 
-class DockerExecutor(SkillExecutor):
-    """Execute Skill in Docker container"""
-    
-    async def _execute_in_sandbox(
-        self,
-        skill_dir: str,
-        input_data: Dict[str, Any],
-        timeout_seconds: int,
-    ) -> Dict[str, Any]:
-        """
-        Execute skill in Docker container
-        
-        TODO: Implementation
-        - Build container image
-        - Run with resource limits
-        - Mount skill directory
-        - Cleanup container
-        """
-        pass
+class PythonVenvExecutor(SkillRuntime):
+    pass
+
+
+class DockerExecutor(SkillRuntime):
+    pass
