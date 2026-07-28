@@ -136,6 +136,9 @@ class ChatMessageModel(Base):
         String(36), ForeignKey("chat_sessions.id", ondelete="CASCADE"), nullable=False, index=True
     )
     role: Mapped[str] = mapped_column(String(30), nullable=False)
+    agent_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("resources.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     text: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
 

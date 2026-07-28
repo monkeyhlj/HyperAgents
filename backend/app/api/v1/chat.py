@@ -790,8 +790,10 @@ async def send_message(
     executable_skill_results: list[dict] = []
     direct_skill_artifact_paths: list[str] = []
     used_knowledge_bases: list[str] = []  # initialize before agent_id block
+    agent_name: str | None = None
     if payload.agent_id:
         agent_resource = store.get_agent_resource_for_project(db, session.project_id, payload.agent_id)
+        agent_name = agent_resource.name
         model_provider = agent_resource.model_provider
         model_name = agent_resource.model_name
         agent_config = dict(agent_resource.config or {})
@@ -1039,12 +1041,12 @@ Use this information to provide accurate and informed responses. When relevant, 
             agent_config["mcp_ids"] = payload.mcp_ids
 
     try:
-        store.append_chat_message(db, session_id, role="user", text=payload.text)
+        store.append_chat_message(db, session_id, role="user", text=payload.text, agent_id=payload.agent_id)
         used_tools: list[str] = []
         used_mcps: list[dict[str, str]] = []
         used_skills: list[str] = []
 
-        is_skill_inventory_query = bool(bound_skills and _is_skill_listing_query(payload.text))
+        is_skill_inventory_query = _is_skill_listing_query(payload.text)
         mentioned_skills = _extract_mentioned_skills(payload.text, bound_skills) if bound_skills else []
 
         if is_skill_inventory_query:
@@ -1598,7 +1600,7 @@ Use this information to provide accurate and informed responses. When relevant, 
             answer = f"{answer}\n\n使用的 Skill: {', '.join(used_skills)}"
         else:
             print(f"[send_message] NOT adding used_skills (used_skills={used_skills}, is_inventory={is_skill_inventory_query}, artifact_saved={artifact_saved}, has_already={'使用的 Skill:' in answer})")
-        store.append_chat_message(db, session_id, role="assistant", text=answer)
+        store.append_chat_message(db, session_id, role="assistant", text=answer, agent_id=payload.agent_id)
         store.finish_runtime_run(
             db=db,
             run_id=run.id,
@@ -1619,6 +1621,8 @@ Use this information to provide accurate and informed responses. When relevant, 
         return ChatMessageResponse(
             session_id=session_id,
             role="assistant",
+            agent_id=payload.agent_id,
+            agent_name=agent_name,
             text=answer,
             run_id=run.id,
             used_tools=used_tools,
@@ -1656,3 +1660,4 @@ Use this information to provide accurate and informed responses. When relevant, 
             payload={"error": error_text},
         )
         raise
+

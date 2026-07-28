@@ -76,7 +76,7 @@
         </div>
       </div>
 
-      <div class="chat-stream">
+      <div ref="chatStreamRef" class="chat-stream">
         <div v-if="history.length === 0" class="chat-welcome">
           <div class="welcome-mark">HA</div>
           <h1>Ask your agent anything.</h1>
@@ -93,9 +93,14 @@
           <div class="message-bubble">
             <div class="message-meta">
               <strong>{{ roleLabel(item.role) }}</strong>
+              <span v-if="item.role === 'assistant'">Agent: {{ messageAgentLabel(item) }}</span>
               <span v-if="item.used_skills?.length">Skill: {{ item.used_skills.join(', ') }}</span>
             </div>
             <p v-if="item.role === 'user'" class="plain-message">{{ item.text }}</p>
+            <div v-else-if="item.pending" class="assistant-loading">
+              <span>Assistant is thinking</span>
+              <i></i><i></i><i></i>
+            </div>
             <div v-else>
               <div class="capability-tags" v-if="capabilityTags(item).length">
                 <Tag v-for="tag in capabilityTags(item)" :key="tag.key" :color="tag.color">{{ tag.label }}</Tag>
@@ -169,7 +174,7 @@
   </div>
 </template>
 <script setup>
-import { computed, onMounted, ref } from "vue";
+import { computed, nextTick, onMounted, ref } from "vue";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { Message } from "view-ui-plus";
@@ -192,6 +197,7 @@ const sessions = ref([]);
 const runs = ref([]);
 const runEvents = ref([]);
 const currentRunId = ref("");
+const chatStreamRef = ref(null);
 
 function escapeHtml(text) {
   return String(text)
@@ -305,6 +311,17 @@ function roleLabel(role) {
   return role === "user" ? "You" : "Assistant";
 }
 
+function messageAgentLabel(item) {
+  if (item.agent_name) {
+    return item.agent_name;
+  }
+  if (item.agent_id) {
+    const matched = agents.value.find((agent) => agent.id === item.agent_id);
+    return matched?.name || shortId(item.agent_id);
+  }
+  return "No agent selected";
+}
+
 function eventColor(status) {
   if (status === "succeeded" || status === "completed") return "green";
   if (status === "failed" || status === "error") return "red";
@@ -319,6 +336,14 @@ function capabilityTags(item) {
   for (const kb of item.used_knowledge_bases || []) tags.push({ key: `kb-${kb}`, color: "cyan", label: `kb: ${kb}` });
   for (const call of item.used_mcps || []) tags.push({ key: `mcp-${call.mcp || ""}-${call.tool || ""}`, color: "geekblue", label: `mcp: ${call.mcp || "-"}/${call.tool || "-"}` });
   return tags;
+}
+
+async function scrollChatToBottom() {
+  await nextTick();
+  const el = chatStreamRef.value;
+  if (el) {
+    el.scrollTop = el.scrollHeight;
+  }
 }
 
 const filteredProjects = computed(() => {
@@ -446,13 +471,27 @@ async function sendMessage() {
     Message.warning("Please select a project first");
     return;
   }
-  if (!message.value.trim()) {
+  if (!message.value.trim() || sending.value) {
     return;
   }
 
   sending.value = true;
   const textToSend = message.value;
-  history.value.push({ role: "user", text: textToSend });
+  message.value = "";
+  const pendingMessage = {
+    role: "assistant",
+    text: "",
+    pending: true,
+    agent_id: agentId.value || null,
+    agent_name: selectedAgent.value?.name || null,
+    used_tools: [],
+    used_mcps: [],
+    used_knowledge_bases: [],
+    used_skills: []
+  };
+  history.value.push({ role: "user", text: textToSend }, pendingMessage);
+  await scrollChatToBottom();
+
   try {
     if (!sessionId.value) {
       const created = await api.createSession(selectedProject.value.id, sessionTitle.value || "default");
@@ -463,23 +502,28 @@ async function sendMessage() {
       text: textToSend,
       agent_id: agentId.value || null
     });
-    history.value.push({
-      role: data.role,
+    Object.assign(pendingMessage, {
+      role: data.role || "assistant",
+      agent_id: data.agent_id || agentId.value || null,
+      agent_name: data.agent_name || selectedAgent.value?.name || null,
       text: data.text || "[empty response]",
+      pending: false,
       used_tools: data.used_tools || [],
       used_mcps: data.used_mcps || [],
       used_knowledge_bases: data.used_knowledge_bases || [],
       used_skills: data.used_skills || []
     });
-    message.value = "";
+    await scrollChatToBottom();
     await loadRuns();
   } catch (error) {
+    pendingMessage.pending = false;
+    pendingMessage.text = `Request failed: ${error.message || "Send message failed"}`;
     Message.error(error.message || "Send message failed");
+    await scrollChatToBottom();
   } finally {
     sending.value = false;
   }
 }
-
 onMounted(async () => {
   await loadProjects();
   await loadAgents();
@@ -764,6 +808,43 @@ onMounted(async () => {
 .message-meta strong { color: var(--ink); }
 .plain-message { margin: 0; white-space: pre-wrap; line-height: 1.7; }
 .capability-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+
+.assistant-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 26px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.assistant-loading i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: assistant-pulse 1s infinite ease-in-out;
+}
+
+.assistant-loading i:nth-child(3) {
+  animation-delay: 0.15s;
+}
+
+.assistant-loading i:nth-child(4) {
+  animation-delay: 0.3s;
+}
+
+@keyframes assistant-pulse {
+  0%, 80%, 100% {
+    opacity: 0.25;
+    transform: translateY(0);
+  }
+  40% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
 
 .composer {
   padding: 14px 18px 16px;

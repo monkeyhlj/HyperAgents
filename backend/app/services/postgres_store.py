@@ -731,11 +731,18 @@ class PostgresStore:
             for item in sessions
         ]
 
-    def append_chat_message(self, db: Session, session_id: str, role: str, text: str) -> None:
+    def append_chat_message(
+        self,
+        db: Session,
+        session_id: str,
+        role: str,
+        text: str,
+        agent_id: str | None = None,
+    ) -> None:
         session = db.get(ChatSessionModel, session_id)
         if not session:
             raise HTTPException(status_code=404, detail="Chat session not found")
-        db.add(ChatMessageModel(session_id=session_id, role=role, text=text))
+        db.add(ChatMessageModel(session_id=session_id, role=role, text=text, agent_id=agent_id))
         db.commit()
 
     def create_runtime_run(
@@ -909,21 +916,24 @@ class PostgresStore:
     def list_chat_messages_for_user(self, db: Session, session_id: str, user_id: str, limit: int = 200) -> list[dict]:
         session = self.get_chat_session_for_user(db, session_id, user_id)
         stmt = (
-            select(ChatMessageModel)
+            select(ChatMessageModel, ResourceModel)
+            .outerjoin(ResourceModel, ResourceModel.id == ChatMessageModel.agent_id)
             .where(ChatMessageModel.session_id == session.id)
             .order_by(ChatMessageModel.created_at.asc())
             .limit(limit)
         )
-        messages = db.scalars(stmt).all()
+        rows = db.execute(stmt).all()
         return [
             {
-                "id": item.id,
-                "session_id": item.session_id,
-                "role": item.role,
-                "text": item.text,
-                "created_at": item.created_at.isoformat(),
+                "id": message.id,
+                "session_id": message.session_id,
+                "role": message.role,
+                "agent_id": message.agent_id,
+                "agent_name": agent.name if agent else None,
+                "text": message.text,
+                "created_at": message.created_at.isoformat(),
             }
-            for item in messages
+            for message, agent in rows
         ]
 
     def get_agent_resource_for_project(self, db: Session, project_id: str, agent_id: str) -> ResourceModel:
@@ -1263,5 +1273,6 @@ class PostgresStore:
 
 
 store = PostgresStore()
+
 
 

@@ -79,6 +79,8 @@ class ChatMessageRequest(BaseModel):
 class ChatMessageResponse(BaseModel):
     session_id: str
     role: str
+    agent_id: str | None = None
+    agent_name: str | None = None
     text: str
     run_id: str | None = None
     used_tools: list[str] = []
@@ -99,6 +101,8 @@ class ChatMessageRecord(BaseModel):
     id: str
     session_id: str
     role: str
+    agent_id: str | None = None
+    agent_name: str | None = None
     text: str
     created_at: str
 
