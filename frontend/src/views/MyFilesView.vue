@@ -50,9 +50,14 @@
           {{ row.updated_at ? new Date(row.updated_at).toLocaleString() : "-" }}
         </template>
         <template #action="{ row }">
-          <Button size="small" type="primary" ghost :loading="downloadingPath === row.path" @click="downloadFile(row)">
-            Download
-          </Button>
+          <div class="file-actions">
+            <Button size="small" type="primary" ghost :loading="downloadingPath === row.path" @click="downloadFile(row)">
+              Download
+            </Button>
+            <Button size="small" type="error" ghost :loading="deletingPath === row.path" @click="confirmDelete(row)">
+              Delete
+            </Button>
+          </div>
         </template>
       </Table>
 
@@ -75,7 +80,7 @@
 
 <script setup>
 import { computed, onMounted, ref, watch } from "vue";
-import { Message } from "view-ui-plus";
+import { Message, Modal } from "view-ui-plus";
 import { api } from "../services/api";
 
 const loading = ref(false);
@@ -85,6 +90,7 @@ const fileQuery = ref("");
 const filePage = ref(1);
 const pageSize = 10;
 const downloadingPath = ref("");
+const deletingPath = ref("");
 const selectedFiles = ref([]);
 const fileInput = ref(null);
 
@@ -92,7 +98,7 @@ const columns = [
   { title: "Path", slot: "path", minWidth: 420 },
   { title: "Size", slot: "size", width: 120 },
   { title: "Updated", slot: "updated", width: 210 },
-  { title: "Action", slot: "action", width: 120, align: "center" },
+  { title: "Action", slot: "action", width: 220, align: "center", fixed: "right" },
 ];
 
 function formatSize(bytes) {
@@ -191,6 +197,41 @@ async function downloadFile(row) {
   }
 }
 
+function confirmDelete(row) {
+  Modal.confirm({
+    title: "Delete file",
+    content: `Delete ${row.path}? This will remove the file from My Files.`,
+    okText: "Delete",
+    cancelText: "Cancel",
+    loading: true,
+    async onOk() {
+      try {
+        await deleteFile(row);
+        Modal.remove();
+      } catch (_) {
+        Modal.remove();
+      }
+    },
+  });
+}
+
+async function deleteFile(row) {
+  deletingPath.value = row.path;
+  try {
+    await api.deleteMyFile(row.path);
+    Message.success("File deleted");
+    files.value = files.value.filter((item) => item.path !== row.path);
+    const maxPage = Math.max(1, Math.ceil(filteredFiles.value.length / pageSize));
+    if (filePage.value > maxPage) {
+      filePage.value = maxPage;
+    }
+  } catch (error) {
+    Message.error(error.message || "Delete failed");
+    throw error;
+  } finally {
+    deletingPath.value = "";
+  }
+}
 watch(fileQuery, () => {
   filePage.value = 1;
 });
@@ -269,6 +310,13 @@ onMounted(loadFiles);
 .file-path {
   font-family: Consolas, "Courier New", monospace;
   color: #20304a;
+}
+.file-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  white-space: nowrap;
 }
 
 @media (max-width: 760px) {

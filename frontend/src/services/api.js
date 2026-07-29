@@ -137,7 +137,11 @@ export const api = {
       headers,
     });
   },
-  async uploadMyFiles(files, targetDir = "") {
+  deleteMyFile(filePath) {
+    return request(withQuery("/api/v1/files/me", { path: filePath }), {
+      method: "DELETE",
+    });
+  },  async uploadMyFiles(files, targetDir = "") {
     const formData = new FormData();
     files.forEach((file) => {
       formData.append("files", file, file.webkitRelativePath || file.name);

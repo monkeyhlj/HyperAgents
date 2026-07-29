@@ -124,10 +124,13 @@ class ReActAgent:
                 f"tools={len(tools)}, max_iterations={self.max_iterations}"
             )
 
-            # Build system prompt
-            if not system_prompt:
-                system_prompt = self._build_system_prompt(tools)
-
+            # Build system prompt. Even when a project/agent prompt exists, append
+            # the ReAct tool instructions so tools such as load_skill are visible.
+            tool_prompt = self._build_system_prompt(tools)
+            if system_prompt:
+                system_prompt = f"{system_prompt}\n\n{tool_prompt}"
+            else:
+                system_prompt = tool_prompt
             # Initialize conversation
             messages = [
                 {

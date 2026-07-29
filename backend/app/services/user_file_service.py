@@ -100,5 +100,25 @@ class UserFileService:
             raise FileNotFoundError("File not found")
         return target
 
+    @staticmethod
+    def delete_file(user_id: str, relative_path: str) -> str:
+        target = UserFileService._resolve_user_path(user_id, relative_path)
+        if not target.exists() or not target.is_file():
+            raise FileNotFoundError("File not found")
+
+        root = UserFileService._user_root(user_id).resolve()
+        deleted_path = target.relative_to(root).as_posix()
+        target.unlink()
+
+        current = target.parent
+        while current != root:
+            try:
+                current.rmdir()
+            except OSError:
+                break
+            current = current.parent
+
+        return deleted_path
+
 
 user_file_service = UserFileService()

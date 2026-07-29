@@ -30,6 +30,19 @@ def download_my_file(
 
     return FileResponse(path=str(file_path), filename=file_path.name, media_type="application/octet-stream")
 
+@router.delete("/me")
+def delete_my_file(
+    path: str = Query(...),
+    user_id: str = Depends(get_current_user_id),
+):
+    try:
+        deleted_path = user_file_service.delete_file(user_id, path)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {"deleted_path": deleted_path}
 
 @router.post("/me/upload")
 async def upload_my_files(

@@ -180,6 +180,11 @@ class SkillRuntime:
             payload_path = temp_dir / "payload.json"
             runner_path.write_text(_RUNNER_SCRIPT, encoding="utf-8")
 
+            input_files = self._materialize_input_files(
+                work_dir=work_dir,
+                input_data=input_data,
+                user_id=user_id or str((context or {}).get("user_id") or ""),
+            )
             runtime_context = dict(context or {})
             runtime_context.update(
                 {
@@ -187,6 +192,8 @@ class SkillRuntime:
                     "skill_name": skill.get("name") or skill_id,
                     "work_dir": str(work_dir),
                     "outputs_dir": str(work_dir / "outputs"),
+                    "inputs_dir": str(work_dir / "inputs"),
+                    "input_files": input_files,
                 }
             )
             (work_dir / "outputs").mkdir(parents=True, exist_ok=True)
@@ -251,6 +258,42 @@ class SkillRuntime:
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
 
+    @staticmethod
+    def _materialize_input_files(*, work_dir: Path, input_data: dict[str, Any], user_id: str | None) -> list[dict[str, str]]:
+        files = input_data.get("files") or []
+        if not user_id or not isinstance(files, list):
+            return []
+
+        inputs_dir = work_dir / "inputs"
+        inputs_dir.mkdir(parents=True, exist_ok=True)
+        materialized: list[dict[str, str]] = []
+        used_names: set[str] = set()
+
+        for index, relative_path in enumerate(files, start=1):
+            try:
+                source = user_file_service.get_file_for_download(user_id, str(relative_path))
+            except Exception as exc:
+                materialized.append({
+                    "source_path": str(relative_path),
+                    "error": str(exc),
+                })
+                continue
+
+            base_name = source.name or f"input_{index}"
+            target_name = base_name
+            if target_name in used_names:
+                target_name = f"{index}_{base_name}"
+            used_names.add(target_name)
+            target = inputs_dir / target_name
+            shutil.copy2(source, target)
+            materialized.append({
+                "source_path": str(relative_path),
+                "local_path": str(target),
+                "filename": target_name,
+            })
+
+        input_data.setdefault("input_files", materialized)
+        return materialized
     def _resolve_entrypoint(self, skill: dict) -> tuple[Path, Path, str]:
         skill_id = str(skill.get("skill_id") or "")
         if not skill_id:

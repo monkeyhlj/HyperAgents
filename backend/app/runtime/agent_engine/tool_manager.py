@@ -1,7 +1,14 @@
 """Tool Manager: Unified management of all tool types (MCP, Built-in, Skills, KB)."""
 
+import asyncio
+import json
 import logging
+import re
+from datetime import datetime
 from typing import Optional, Any, Callable
+
+from app.runtime.file_references import extract_referenced_file_paths
+from app.runtime.skill_loader import find_skill, render_loaded_skill
 from abc import ABC, abstractmethod
 
 logger = logging.getLogger(__name__)
@@ -267,7 +274,13 @@ class ToolManager:
             except Exception as e:
                 logger.error(f"Failed to load built-in tool {tool_name}: {str(e)}")
 
-        # 3. Load skills
+        # 3. Expose progressive Skill loader, then load executable Skills.
+        if context.get("skills"):
+            load_skill_tool = self._load_skill_loader_tool(context)
+            tools_list.append(load_skill_tool.to_openai_schema())
+            self.tools[load_skill_tool.name] = load_skill_tool
+
+        # 4. Load executable skills
         skill_ids = agent_config.get("skill_ids", [])
         for skill_id in skill_ids:
             try:
@@ -276,11 +289,11 @@ class ToolManager:
                     skill_tool = self._load_skill_tool(skill_id, skill_spec)
                     if skill_tool:
                         tools_list.append(skill_tool.to_openai_schema())
-                        self.tools[skill_id] = skill_tool
+                        self.tools[skill_tool.name] = skill_tool
             except Exception as e:
                 logger.error(f"Failed to load skill {skill_id}: {str(e)}")
 
-        # 4. Load KB tool if any
+        # 5. Load KB tool if any
         if agent_config.get("knowledge_base_ids"):
             kb_tool = KBTool(agent_config.get("knowledge_base_ids", []))
             tools_list.append(kb_tool.to_openai_schema())
@@ -360,12 +373,110 @@ class ToolManager:
             executor=executor,
         )
 
-    def _load_skill_tool(self, skill_id: str, skill_spec: dict) -> Optional[Tool]:
-        """Load a skill as a tool."""
-        # TODO: Implement skill loading
-        logger.warning(f"Skill loading not yet implemented for {skill_id}")
-        return None
+    def _load_skill_loader_tool(self, context: dict) -> Tool:
+        """Load the progressive disclosure tool for instruction Skills."""
+        skills_by_id = context.get("skills") or {}
+        bound_skills = [item for item in skills_by_id.values() if isinstance(item, dict)]
 
+        async def execute_load_skill(skill_name: str, **kwargs) -> str:
+            skill = find_skill(bound_skills, skill_name)
+            if not skill:
+                available = ", ".join(str(item.get("name") or item.get("skill_id")) for item in bound_skills)
+                return f"Skill not found: {skill_name}. Available Skills: {available or '-'}"
+            return render_loaded_skill(skill)
+
+        return BuiltinTool(
+            name="load_skill",
+            description="Load the full SKILL.md instructions and attached script list for one bound Agent Skill by name. Use this before following a Skill's detailed workflow.",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "skill_name": {
+                        "type": "string",
+                        "description": "The exact Agent Skill name or alias to load, for example xlsx or front-design.",
+                    }
+                },
+                "required": ["skill_name"],
+            },
+            executor=execute_load_skill,
+        )
+
+    def _load_skill_tool(self, skill_id: str, skill_spec: dict) -> Optional[Tool]:
+        """Load an executable Skill package as a callable tool."""
+        entrypoint = str(skill_spec.get("entrypoint") or "").strip()
+        if not entrypoint:
+            logger.info("Skill %s is instruction-only; no executable tool registered", skill_id)
+            return None
+
+        tool_name = self._safe_skill_tool_name(skill_spec)
+        description = (
+            skill_spec.get("description")
+            or skill_spec.get("purpose")
+            or f"Execute the {skill_spec.get('name') or skill_id} Agent Skill."
+        )
+        parameters = self._skill_parameters(skill_spec)
+
+        runtime_context = dict(skill_spec.get("_runtime_context") or {})
+        output_base_dir = str(runtime_context.get("output_base_dir") or f"generated/{tool_name}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}")
+        user_id = runtime_context.get("user_id")
+        timeout_seconds = int(runtime_context.get("timeout_seconds") or (skill_spec.get("instance_config") or {}).get("timeout_seconds") or 30)
+
+        async def execute_skill(**kwargs) -> Any:
+            from app.runtime.skill_executor import SkillRuntime
+
+            input_data = dict(kwargs or {})
+            for key in ("project_id", "session_id", "agent_id", "user_id"):
+                if runtime_context.get(key) and key not in input_data:
+                    input_data[key] = runtime_context[key]
+
+            result = await asyncio.to_thread(
+                SkillRuntime(None).execute,
+                skill=skill_spec,
+                input_data=input_data,
+                context=runtime_context,
+                timeout_seconds=timeout_seconds,
+                user_id=str(user_id) if user_id else None,
+                output_base_dir=output_base_dir,
+            )
+            return json.dumps(result, ensure_ascii=False, default=str)
+
+        logger.info("Registered Skill tool %s for skill %s", tool_name, skill_id)
+        return SkillTool(
+            name=tool_name,
+            description=str(description)[:1024],
+            parameters=parameters,
+            skill_def=skill_spec,
+            executor=execute_skill,
+        )
+
+    @staticmethod
+    def _safe_skill_tool_name(skill_spec: dict) -> str:
+        raw = str(skill_spec.get("name") or skill_spec.get("skill_id") or "skill").lower()
+        safe = re.sub(r"[^a-z0-9_]+", "_", raw).strip("_") or "skill"
+        if not safe.startswith("skill_"):
+            safe = f"skill_{safe}"
+        return safe[:64]
+
+    @staticmethod
+    def _skill_parameters(skill_spec: dict) -> dict:
+        schema = skill_spec.get("input_schema") or {}
+        if isinstance(schema, dict) and schema.get("type") == "object" and isinstance(schema.get("properties"), dict):
+            return schema
+        return {
+            "type": "object",
+            "properties": {
+                "input_text": {
+                    "type": "string",
+                    "description": "The user's request or task for the Skill.",
+                },
+                "files": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional My Files paths relevant to the task.",
+                },
+            },
+            "required": ["input_text"],
+        }
     async def execute_tool(
         self,
         tool_name: str,
