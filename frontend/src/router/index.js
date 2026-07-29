@@ -201,6 +201,12 @@ const routes = [
     }
   },
   {
+    path: "/workflows/:resourceId",
+    name: "workflows-detail",
+    component: () => import("../views/resources/WorkflowDetailView.vue"),
+    meta: { requiresAuth: true, section: "workflows", title: "Workflow Detail", keepAlive: true, keepAliveKey: "fullPath" }
+  },
+  {
     path: "/workbench",
     name: "workbench",
     component: () => import("../views/WorkbenchView.vue"),

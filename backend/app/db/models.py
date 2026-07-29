@@ -89,6 +89,55 @@ class ResourceModel(Base):
         DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow
     )
 
+class WorkflowRunModel(Base):
+    __tablename__ = "workflow_runs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    workflow_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("resources.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    project_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    triggered_by: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    trigger_type: Mapped[str] = mapped_column(String(30), nullable=False, default="manual")
+    input_data: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="running", index=True)
+    output_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_workflow_runs_workflow_created", "workflow_id", "created_at"),
+    )
+
+
+class WorkflowStepExecutionModel(Base):
+    __tablename__ = "workflow_step_executions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    workflow_run_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("workflow_runs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    step_id: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    step_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    agent_id: Mapped[str] = mapped_column(String(36), ForeignKey("resources.id", ondelete="RESTRICT"), nullable=False)
+    input_data: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    output_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="pending", index=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(nullable=True)
+    order_index: Mapped[int] = mapped_column(default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=datetime.utcnow)
+
+    __table_args__ = (
+        Index("ix_workflow_step_executions_run_order", "workflow_run_id", "order_index"),
+    )
 
 
 class ProviderConnectionModel(Base):

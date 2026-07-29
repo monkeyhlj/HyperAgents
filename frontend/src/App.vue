@@ -119,8 +119,8 @@
 
         <Content class="app-content">
           <RouterView v-slot="{ Component, route: viewRoute }">
-            <KeepAlive include="WorkbenchView">
-              <component :is="Component" :key="viewRoute.meta.keepAlive ? viewRoute.name : viewRoute.fullPath" />
+            <KeepAlive include="WorkbenchView,WorkflowDetailView">
+              <component :is="Component" :key="viewRoute.meta.keepAlive ? (viewRoute.meta.keepAliveKey === 'fullPath' ? viewRoute.fullPath : viewRoute.name) : viewRoute.fullPath" />
             </KeepAlive>
           </RouterView>
         </Content>

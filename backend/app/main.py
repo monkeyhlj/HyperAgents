@@ -11,6 +11,7 @@ from app.api.router import api_router
 from app.core.config import settings
 from app.db.base import Base
 from app.db.session import engine
+from app.db.schema import ensure_workflow_tables
 import app.db.models  # noqa: F401
 from app.workers.knowledge_processor import process_pending_documents, process_pending_embeddings
 
@@ -41,18 +42,20 @@ background_task_handle = None
 @app.on_event("startup")
 def on_startup() -> None:
     logger.info(f"Application startup hook running: pid={os.getpid()}, cwd={os.getcwd()}")
-    if not settings.auto_create_tables:
-        return
+    if settings.auto_create_tables:
+        try:
+            Base.metadata.create_all(bind=engine)
+        except SQLAlchemyError as exc:
+            # Allow local development to start even when DB is temporarily unavailable.
+            print(f"[startup] database initialization skipped: {exc}")
     try:
-        Base.metadata.create_all(bind=engine)
+        ensure_workflow_tables()
     except SQLAlchemyError as exc:
-        # Allow local development to start even when DB is temporarily unavailable.
-        print(f"[startup] database initialization skipped: {exc}")
-    
+        print(f"[startup] workflow table initialization skipped: {exc}")
+
     # Start background tasks
     global background_task_handle
     background_task_handle = asyncio.create_task(run_background_tasks())
-
 
 @app.on_event("shutdown")
 def on_shutdown() -> None:

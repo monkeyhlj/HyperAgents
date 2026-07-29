@@ -389,6 +389,29 @@ export const api = {
     });
   },
 
+
+  // ==================== Workflow APIs ====================
+
+  validateWorkflow(workflowId) {
+    return request(`/api/v1/workflows/${workflowId}/validate`, {
+      method: "POST"
+    });
+  },
+
+  runWorkflow(workflowId, payload) {
+    return request(`/api/v1/workflows/${workflowId}/run`, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+  },
+
+  listWorkflowRuns(workflowId, query = {}) {
+    return request(withQuery(`/api/v1/workflows/${workflowId}/runs`, query));
+  },
+
+  getWorkflowRun(workflowId, runId) {
+    return request(`/api/v1/workflows/${workflowId}/runs/${runId}`);
+  },
   listSkillBindings(skillId) {
     return request(`/api/v1/skills/${skillId}/agents`);
   }

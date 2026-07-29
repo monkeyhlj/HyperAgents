@@ -42,16 +42,11 @@
 
           <Form :model="form" label-position="top">
             <Row :gutter="16">
-              <Col :xs="24" :md="12">
+              <Col :xs="24" :md="24">
                 <FormItem label="Project">
                   <Select v-model="form.project_id" filterable placeholder="Select project" @on-change="handleProjectChange">
                     <Option v-for="item in projects" :key="item.id" :value="item.id">{{ item.name }} ({{ item.id }})</Option>
                   </Select>
-                </FormItem>
-              </Col>
-              <Col :xs="24" :md="12">
-                <FormItem label="Kind">
-                  <Input :value="kind" readonly />
                 </FormItem>
               </Col>
             </Row>
@@ -447,6 +442,184 @@
               </template>
             </template>
 
+
+            <template v-if="isWorkflowKind">
+              <Divider />
+              <div class="workflow-builder">
+                <div class="workflow-toolbar">
+                  <div>
+                    <h3>Workflow Canvas</h3>
+                    <p>Build an agent flow. Drag from a node handle to create branches; join nodes merge upstream outputs.</p>
+                  </div>
+                  <Space wrap>
+                    <Button @click="syncWorkflowFromJson">Load from JSON</Button>
+                    <Button type="primary" ghost @click="syncWorkflowToJson">Format JSON</Button>
+                    <Button @click="addBranchFromSelected">Add Branch</Button>
+                    <Button @click="addJoinNode">Add Join Node</Button>
+                    <Button type="primary" @click="addWorkflowNode">Add Node</Button>
+                  </Space>
+                </div>
+
+                <Row :gutter="16" class="workflow-meta-row">
+                  <Col :xs="24" :md="6">
+                    <FormItem label="Version">
+                      <Input v-model="workflowDraft.version" />
+                    </FormItem>
+                  </Col>
+                  <Col :xs="24" :md="6">
+                    <FormItem label="Status">
+                      <Select v-model="workflowDraft.status">
+                        <Option value="draft">draft</Option>
+                        <Option value="active">active</Option>
+                        <Option value="paused">paused</Option>
+                      </Select>
+                    </FormItem>
+                  </Col>
+                  <Col :xs="24" :md="6">
+                    <FormItem label="Timeout Seconds">
+                      <Input v-model="workflowDraft.timeout_seconds" type="number" />
+                    </FormItem>
+                  </Col>
+                  <Col :xs="24" :md="6">
+                    <FormItem label="Max Retries">
+                      <Input v-model="workflowDraft.max_retries" type="number" />
+                    </FormItem>
+                  </Col>
+                </Row>
+
+                <div class="workflow-canvas split-canvas">
+                  <div class="workflow-flow-panel vue-flow-panel">
+                    <div class="flow-panel-title">
+                      <span>Flow</span>
+                      <Space>
+                        <Tag color="cyan">{{ workflowNodes.length }} nodes</Tag>
+                        <Button size="small" @click="openWorkflowFullscreen">Fullscreen</Button>
+                      </Space>
+                    </div>
+                    <VueFlow
+                      class="workflow-vue-flow"
+                      :nodes="workflowFlowNodes"
+                      :edges="workflowFlowEdges"
+                      :default-viewport="{ zoom: 0.9 }"
+                      :min-zoom="0.35"
+                      :max-zoom="1.5"
+                      fit-view-on-init
+                      @node-click="handleWorkflowNodeClick"
+                      @node-drag-stop="handleWorkflowNodeDragStop"
+                      @connect="handleWorkflowConnect"
+                    >
+                      <Background pattern-color="#c7d7ea" :gap="18" />
+                      <Controls />
+                      <template #node-default="nodeProps">
+                        <div class="flow-card-node">
+                          <div class="flow-card-head">
+                            <strong>{{ nodeProps.data.label }}</strong>
+                            <span>{{ nodeProps.data.outputMode }}</span>
+                          </div>
+                          <small>{{ nodeProps.data.sublabel }}</small>
+                        </div>
+                      </template>
+                    </VueFlow>
+                  </div>
+
+                  <div class="workflow-editor-panel" v-if="selectedWorkflowNode">
+                    <div class="editor-panel-heading">
+                      <div>
+                        <Tag color="blue">Selected Node</Tag>
+                        <h3>{{ selectedWorkflowNode.name || selectedWorkflowNode.id }}</h3>
+                      </div>
+                      <Space>
+                        <Button size="small" @click="addWorkflowNodeAfterSelected">Add After</Button>
+                        <Button size="small" type="error" ghost :disabled="workflowNodes.length === 1" @click="removeSelectedWorkflowNode">Delete</Button>
+                      </Space>
+                    </div>
+
+                    <Row :gutter="12">
+                      <Col :xs="24" :md="8">
+                        <FormItem label="Step ID">
+                          <Input v-model="selectedWorkflowNode.id" placeholder="step_1" />
+                        </FormItem>
+                      </Col>
+                      <Col :xs="24" :md="10">
+                        <FormItem label="Node Name">
+                          <Input v-model="selectedWorkflowNode.name" placeholder="Node name" />
+                        </FormItem>
+                      </Col>
+                      <Col :xs="24" :md="6">
+                        <FormItem label="Output Mode">
+                          <Select v-model="selectedWorkflowNode.output_mode">
+                            <Option value="text">text</Option>
+                            <Option value="json">json</Option>
+                          </Select>
+                        </FormItem>
+                      </Col>
+                    </Row>
+
+                    <FormItem label="Agent">
+                      <Select v-model="selectedWorkflowNode.agent_id" filterable placeholder="Select project agent">
+                        <Option v-for="agent in agentOptions" :key="agent.id" :value="agent.id">{{ agent.name }} ({{ agent.id }})</Option>
+                      </Select>
+                    </FormItem>
+
+                    <FormItem label="Input Template">
+                      <Input v-model="selectedWorkflowNode.input_text" type="textarea" :rows="5" placeholder="{{ input.task }} or use {{ steps.step_1.output }}" />
+                    </FormItem>
+
+                    <div class="connection-editor">
+                      <div class="connection-header">
+                        <strong>Connections</strong>
+                        <span>Drag node handles on the canvas, or use Add Branch / Add Join Node.</span>
+                      </div>
+                      <div class="connection-groups">
+                        <div>
+                          <small>Upstream</small>
+                          <div class="connection-tags">
+                            <Tag v-for="node in upstreamNodesFor(selectedWorkflowNode)" :key="node.uid" color="geekblue">{{ node.name || node.id }}</Tag>
+                            <span v-if="upstreamNodesFor(selectedWorkflowNode).length === 0" class="connection-empty">Start node</span>
+                          </div>
+                        </div>
+                        <div>
+                          <small>Downstream</small>
+                          <div class="connection-tags">
+                            <Tag v-for="node in downstreamNodesFor(selectedWorkflowNode)" :key="node.uid" color="cyan">{{ node.name || node.id }}</Tag>
+                            <span v-if="downstreamNodesFor(selectedWorkflowNode).length === 0" class="connection-empty">End node</span>
+                          </div>
+                        </div>
+                      </div>
+                      <div v-if="outgoingEdgesFor(selectedWorkflowNode).length" class="edge-list">
+                        <div v-for="edge in outgoingEdgesFor(selectedWorkflowNode)" :key="edge.id" class="edge-row">
+                          <span>{{ selectedWorkflowNode.name || selectedWorkflowNode.id }} -> {{ nodeLabelByUid(edge.target) }}</span>
+                          <Button size="small" type="error" ghost @click="removeWorkflowEdge(edge.id)">Remove</Button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div class="routing-editor">
+                      <div class="routing-header">
+                        <strong>Routing</strong>
+                        <Button size="small" @click="addWorkflowRoute(selectedWorkflowNode)">Add Route</Button>
+                      </div>
+                      <div v-if="selectedWorkflowNode.routing.length === 0" class="routing-empty">No custom routing. It will continue to the next node.</div>
+                      <div v-for="(routeItem, routeIndex) in selectedWorkflowNode.routing" :key="routeIndex" class="routing-row">
+                        <Select v-model="routeItem.mode" class="route-mode-select">
+                          <Option value="condition">condition</Option>
+                          <Option value="default">default</Option>
+                        </Select>
+                        <Input v-if="routeItem.mode !== 'default'" v-model="routeItem.condition" placeholder="output.priority == 'high'" />
+                        <Select v-model="routeItem.next" filterable placeholder="Next node">
+                          <Option v-for="target in workflowNodes" :key="target.uid" :value="target.id" :disabled="target.uid === selectedWorkflowNode.uid">{{ target.name || target.id }}</Option>
+                        </Select>
+                        <Button size="small" type="error" ghost @click="selectedWorkflowNode.routing.splice(routeIndex, 1)">Remove</Button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <FormItem label="Final Output JSON">
+                  <CodeEditor v-model="workflowOutputJson" language="json" min-height="120px" />
+                </FormItem>
+              </div>
+            </template>
             <FormItem v-if="showConfigEditor" :label="configEditorLabel">
               <Alert show-icon class="authoring-guide-alert">
                 <template #desc>
@@ -455,11 +628,15 @@
                       <strong>MCP advanced config:</strong>
                       Keep core fields in the MCP form above (transport / endpoint / command / timeout). Put optional extras here, such as auth strategies, feature flags, or routing hints.
                     </div>
+                    <div v-else-if="isWorkflowKind">
+                      <strong>Auto-synced Workflow Definition:</strong>
+                      This JSON is generated from the canvas above while you edit nodes, routing, metadata, or output mapping.
+                    </div>
                     <div v-else>
                       <strong>Advanced Config example:</strong>
                       provider_profile decides which .env prefix the backend reads. For example, provider_profile=qwen means QWEN_API_KEY / QWEN_BASE_URL / QWEN_DEFAULT_MODEL must exist in .env. role_name is optional and only used as a human-readable label inside the config.
                     </div>
-                    <pre v-if="!isMcpKind" class="config-example-block">{
+                    <pre v-if="!isMcpKind && !isWorkflowKind" class="config-example-block">{
   "provider_profile": "qwen",
   "temperature": 0.2
 }</pre>
@@ -493,6 +670,49 @@
       </Col>
     </Row>
 
+    <Teleport to="body">
+      <div v-if="isWorkflowKind && showWorkflowFullscreen" class="workflow-fullscreen-overlay">
+        <div class="workflow-fullscreen-shell">
+          <div class="workflow-fullscreen-toolbar">
+            <div>
+              <h3>Workflow Canvas</h3>
+              <p>{{ workflowNodes.length }} nodes · {{ workflowEdges.length }} links · drag empty canvas to pan, wheel to zoom</p>
+            </div>
+            <Space wrap>
+              <Button @click="addBranchFromSelected">Add Branch</Button>
+              <Button @click="addJoinNode">Add Join Node</Button>
+              <Button type="primary" @click="addWorkflowNode">Add Node</Button>
+              <Button @click="requestWorkflowFitView">Fit View</Button>
+              <Button @click="closeWorkflowFullscreen">Close</Button>
+            </Space>
+          </div>
+          <VueFlow
+            class="workflow-vue-flow fullscreen"
+            :nodes="workflowFlowNodes"
+            :edges="workflowFlowEdges"
+            :default-viewport="{ zoom: 0.85 }"
+            :min-zoom="0.15"
+            :max-zoom="2.5"
+            fit-view-on-init
+            @node-click="handleWorkflowNodeClick"
+            @node-drag-stop="handleWorkflowNodeDragStop"
+            @connect="handleWorkflowConnect"
+          >
+            <Background pattern-color="#c7d7ea" :gap="18" />
+            <Controls />
+            <template #node-default="nodeProps">
+              <div class="flow-card-node">
+                <div class="flow-card-head">
+                  <strong>{{ nodeProps.data.label }}</strong>
+                  <span>{{ nodeProps.data.outputMode }}</span>
+                </div>
+                <small>{{ nodeProps.data.sublabel }}</small>
+              </div>
+            </template>
+          </VueFlow>
+        </div>
+      </div>
+    </Teleport>
     <!-- MCP Template Modal -->
     <Modal v-model="showMcpTemplate" title="MCP Recommended Template" ok-text="Copy Template" :loading="false" @on-ok="copyMcpTemplate">
       <div class="mcp-template-modal">
@@ -545,14 +765,21 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { Message } from "view-ui-plus";
+import { VueFlow, useVueFlow } from "@vue-flow/core";
+import { Background } from "@vue-flow/background";
+import { Controls } from "@vue-flow/controls";
+import "@vue-flow/core/dist/style.css";
+import "@vue-flow/core/dist/theme-default.css";
+import "@vue-flow/controls/dist/style.css";
 import CodeEditor from "../../components/CodeEditor.vue";
 import { api } from "../../services/api";
 
 const route = useRoute();
 const router = useRouter();
+const { fitView } = useVueFlow();
 
 const projects = ref([]);
 const templates = ref([]);
@@ -572,6 +799,17 @@ const mcpProbeResult = ref(null);
 const providerProbeResult = ref(null);
 const providerTestResult = ref(null);
 const providerConnectionLoadWarningShown = ref(false);
+const workflowOutputJson = ref("{\n  \"summary\": \"{{ last.output }}\",\n  \"steps\": \"{{ steps }}\"\n}");
+const workflowDraft = ref({
+  version: "1.0.0",
+  status: "draft",
+  timeout_seconds: 300,
+  max_retries: 0
+});
+const workflowNodes = ref([]);
+const workflowEdges = ref([]);
+const selectedWorkflowNodeUid = ref("");
+const showWorkflowFullscreen = ref(false);
 
 const form = ref({
   project_id: "",
@@ -619,6 +857,7 @@ const isToolKind = computed(() => kind.value === "tool");
 const isMcpKind = computed(() => kind.value === "mcp");
 const isSkillKind = computed(() => kind.value === "skill");
 const isKnowledgeKind = computed(() => kind.value === "knowledge_base");
+const isWorkflowKind = computed(() => kind.value === "workflow");
 const pageTitle = computed(() => route.meta.title || "Create Resource");
 const backRoute = computed(() => route.meta.backRoute || "resources-overview");
 const isEditMode = computed(() => route.meta.mode === "edit");
@@ -632,8 +871,12 @@ const configEditorLabel = computed(() => {
   if (isToolKind.value) {
     return "Advanced Tool Config JSON";
   }
+
   if (isMcpKind.value) {
     return "Advanced MCP Config JSON (Editable)";
+  }
+  if (isWorkflowKind.value) {
+    return "Workflow Definition JSON";
   }
   return "Config JSON";
 });
@@ -642,7 +885,8 @@ const nonAgentHint = computed(() => {
     tool: "Tools are programmable helpers. Define function code and schema below. Tool resources can be reused by agents in the same project.",
     skill: "Skills orchestrate tools and logic. Put your composition settings in Config JSON.",
     mcp: "MCP resources are integration descriptors. Use Config JSON to define server and protocol options.",
-    knowledge_base: "Knowledge resources are retrieval/config containers. Define datasource and indexing settings in Config JSON."
+    knowledge_base: "Knowledge resources are retrieval/config containers. Define datasource and indexing settings in Config JSON.",
+    workflow: "Workflows orchestrate project agents with JSON steps, input templates, routing rules and final output mapping."
   };
   return map[kind.value] || "Configure this resource with Config JSON.";
 });
@@ -693,6 +937,27 @@ const toolOptions = computed(() => scopedOwned.value.filter((item) => item.kind 
 const skillOptions = computed(() => scopedOwned.value.filter((item) => item.kind === "skill"));
 const mcpOptions = computed(() => scopedOwned.value.filter((item) => item.kind === "mcp"));
 const kbOptions = computed(() => scopedOwned.value.filter((item) => item.kind === "knowledge_base"));
+const agentOptions = computed(() => scopedOwned.value.filter((item) => item.kind === "agent"));
+const selectedWorkflowNode = computed(() => workflowNodes.value.find((item) => item.uid === selectedWorkflowNodeUid.value) || workflowNodes.value[0] || null);
+const workflowFlowNodes = computed(() => workflowNodes.value.map((node, index) => ({
+  id: node.uid,
+  type: "default",
+  position: node.position || { x: 120 + index * 300, y: 140 },
+  data: {
+    label: `${index + 1}. ${node.name || node.id}`,
+    sublabel: agentNameById(node.agent_id) || "No agent selected",
+    outputMode: node.output_mode || "text"
+  },
+  selected: selectedWorkflowNodeUid.value === node.uid,
+  class: selectedWorkflowNodeUid.value === node.uid ? "workflow-vue-node selected" : "workflow-vue-node"
+})));
+const workflowFlowEdges = computed(() => workflowEdges.value.map((edge) => ({
+  id: edge.id,
+  source: edge.source,
+  target: edge.target,
+  animated: true,
+  type: "smoothstep"
+})).filter((edge) => edge.source && edge.target));
 const selectedProviderConnection = computed(() => {
   if (!form.value.provider_connection_id) {
     return null;
@@ -710,14 +975,364 @@ function defaultAdvancedConfigJsonByKind(targetKind) {
   if (targetKind === "knowledge_base") {
     return "{\n  \"chunk_size\": 512,\n  \"chunk_overlap\": 50,\n  \"embedding_model\": \"openai:text-embedding-3-small\",\n  \"top_k\": 5,\n  \"similarity_threshold\": 0.7\n}";
   }
+  if (targetKind === "workflow") {
+    return "{\n  \"version\": \"1.0.0\",\n  \"status\": \"draft\",\n  \"timeout_seconds\": 300,\n  \"max_retries\": 0,\n  \"steps\": [\n    {\n      \"id\": \"step_1\",\n      \"name\": \"First agent step\",\n      \"agent_id\": \"replace-with-agent-id\",\n      \"input\": {\n        \"text\": \"{{ input.task }}\"\n      },\n      \"output_mode\": \"text\"\n    }\n  ],\n  \"output\": {\n    \"summary\": \"{{ last.output }}\",\n    \"steps\": \"{{ steps }}\"\n  }\n}";
+  }
   return "{}";
 }
 
+
+function makeWorkflowNode(index = workflowNodes.value.length) {
+  const stepNumber = index + 1;
+  return {
+    uid: `${Date.now()}_${Math.random().toString(16).slice(2)}`,
+    id: `step_${stepNumber}`,
+    name: `Step ${stepNumber}`,
+    agent_id: agentOptions.value[0]?.id || "",
+    input_text: index === 0 ? "{{ input.task }}" : `{{ steps.step_${index}.output }}`,
+    output_mode: "text",
+    position: { x: 120 + index * 300, y: 140 },
+    routing: []
+  };
+}
+
+function ensureWorkflowNodes() {
+  if (workflowNodes.value.length === 0) {
+    workflowNodes.value = [makeWorkflowNode(0)];
+  }
+  if (!selectedWorkflowNodeUid.value || !workflowNodes.value.some((item) => item.uid === selectedWorkflowNodeUid.value)) {
+    selectedWorkflowNodeUid.value = workflowNodes.value[0]?.uid || "";
+  }
+}
+
+function makeWorkflowEdge(source, target) {
+  return { id: `edge_${source}_${target}_${Date.now()}_${Math.random().toString(16).slice(2)}`, source, target };
+}
+
+function addWorkflowEdge(source, target) {
+  if (!source || !target || source === target) {
+    return;
+  }
+  const sourceExists = workflowNodes.value.some((node) => node.uid === source);
+  const targetExists = workflowNodes.value.some((node) => node.uid === target);
+  if (!sourceExists || !targetExists) {
+    return;
+  }
+  const exists = workflowEdges.value.some((edge) => edge.source === source && edge.target === target);
+  if (!exists) {
+    workflowEdges.value.push(makeWorkflowEdge(source, target));
+  }
+}
+
+function removeWorkflowEdge(edgeId) {
+  workflowEdges.value = workflowEdges.value.filter((edge) => edge.id !== edgeId);
+}
+
+function handleWorkflowConnect(params) {
+  addWorkflowEdge(params?.source, params?.target);
+}
+
+function addWorkflowNode() {
+  const node = makeWorkflowNode(workflowNodes.value.length);
+  workflowNodes.value.push(node);
+  selectedWorkflowNodeUid.value = node.uid;
+  requestWorkflowFitView();
+}
+
+function addWorkflowNodeAfterSelected() {
+  const selectedIndex = workflowNodes.value.findIndex((item) => item.uid === selectedWorkflowNodeUid.value);
+  const insertIndex = selectedIndex >= 0 ? selectedIndex + 1 : workflowNodes.value.length;
+  const node = makeWorkflowNode(insertIndex);
+  if (selectedIndex >= 0) {
+    const selected = workflowNodes.value[selectedIndex];
+    node.input_text = `{{ steps.${selected.id}.output }}`;
+    node.position = { x: (selected.position?.x ?? 120) + 300, y: selected.position?.y ?? 140 };
+  }
+  workflowNodes.value.splice(insertIndex, 0, node);
+  if (selectedIndex >= 0) {
+    addWorkflowEdge(workflowNodes.value[selectedIndex].uid, node.uid);
+  }
+  selectedWorkflowNodeUid.value = node.uid;
+  requestWorkflowFitView();
+}
+
+function addBranchFromSelected() {
+  const selected = selectedWorkflowNode.value;
+  if (!selected) {
+    return;
+  }
+  const branchCount = outgoingEdgesFor(selected).length;
+  const node = makeWorkflowNode(workflowNodes.value.length);
+  node.name = `Branch ${branchCount + 1}`;
+  node.id = `branch_${workflowNodes.value.length + 1}`;
+  node.input_text = `{{ steps.${selected.id}.output }}`;
+  node.position = {
+    x: (selected.position?.x ?? 120) + 320,
+    y: (selected.position?.y ?? 140) + branchCount * 150 - 60
+  };
+  workflowNodes.value.push(node);
+  addWorkflowEdge(selected.uid, node.uid);
+  selectedWorkflowNodeUid.value = node.uid;
+  requestWorkflowFitView();
+}
+
+function addJoinNode() {
+  const terminalNodes = workflowNodes.value.filter((node) => outgoingEdgesFor(node).length === 0);
+  const sources = terminalNodes.length > 0 ? terminalNodes : workflowNodes.value.slice(-1);
+  const node = makeWorkflowNode(workflowNodes.value.length);
+  node.name = "Join Review";
+  node.id = `join_${workflowNodes.value.length + 1}`;
+  node.input_text = sources.map((source) => `${source.name || source.id}: {{ steps.${source.id}.output }}`).join("\n\n");
+  const maxX = Math.max(...sources.map((source) => source.position?.x ?? 120));
+  const avgY = Math.round(sources.reduce((sum, source) => sum + (source.position?.y ?? 140), 0) / Math.max(1, sources.length));
+  node.position = { x: maxX + 340, y: avgY };
+  workflowNodes.value.push(node);
+  sources.forEach((source) => addWorkflowEdge(source.uid, node.uid));
+  selectedWorkflowNodeUid.value = node.uid;
+  requestWorkflowFitView();
+}
+
+function removeWorkflowNode(index) {
+  if (workflowNodes.value.length <= 1) {
+    return;
+  }
+  const removed = workflowNodes.value[index];
+  workflowNodes.value.splice(index, 1);
+  workflowEdges.value = workflowEdges.value.filter((edge) => edge.source !== removed.uid && edge.target !== removed.uid);
+  workflowNodes.value.forEach((node) => {
+    node.routing = (node.routing || []).filter((routeItem) => routeItem.next !== removed.id);
+  });
+  selectedWorkflowNodeUid.value = workflowNodes.value[Math.min(index, workflowNodes.value.length - 1)]?.uid || "";
+}
+
+function selectWorkflowNode(uid) {
+  selectedWorkflowNodeUid.value = uid;
+}
+
+function removeSelectedWorkflowNode() {
+  const index = workflowNodes.value.findIndex((item) => item.uid === selectedWorkflowNodeUid.value);
+  if (index >= 0) {
+    removeWorkflowNode(index);
+  }
+}
+
+function agentNameById(agentId) {
+  return agentOptions.value.find((item) => item.id === agentId)?.name || "";
+}
+
+function nodeLabelByUid(uid) {
+  const node = workflowNodes.value.find((item) => item.uid === uid);
+  return node ? (node.name || node.id) : uid;
+}
+
+function incomingEdgesFor(node) {
+  if (!node) return [];
+  return workflowEdges.value.filter((edge) => edge.target === node.uid);
+}
+
+function outgoingEdgesFor(node) {
+  if (!node) return [];
+  return workflowEdges.value.filter((edge) => edge.source === node.uid);
+}
+
+function upstreamNodesFor(node) {
+  return incomingEdgesFor(node).map((edge) => workflowNodes.value.find((item) => item.uid === edge.source)).filter(Boolean);
+}
+
+function downstreamNodesFor(node) {
+  return outgoingEdgesFor(node).map((edge) => workflowNodes.value.find((item) => item.uid === edge.target)).filter(Boolean);
+}
+
+function openWorkflowFullscreen() {
+  showWorkflowFullscreen.value = true;
+  requestWorkflowFitView();
+}
+
+function closeWorkflowFullscreen() {
+  showWorkflowFullscreen.value = false;
+}
+function requestWorkflowFitView() {
+  nextTick(() => {
+    try {
+      fitView({ padding: 0.2, duration: 240 });
+    } catch {
+      // Vue Flow can be unmounted while route changes; ignore transient fit errors.
+    }
+  });
+}
+
+function handleWorkflowNodeClick(event) {
+  const node = event?.node || event;
+  if (node?.id) {
+    selectWorkflowNode(node.id);
+  }
+}
+
+function handleWorkflowNodeDragStop(event) {
+  const node = event?.node || event;
+  const target = workflowNodes.value.find((item) => item.uid === node?.id);
+  if (target && node?.position) {
+    target.position = { x: node.position.x, y: node.position.y };
+  }
+}
+
+function addWorkflowRoute(node) {
+  node.routing.push({ mode: "condition", condition: "output.status == 'ok'", next: workflowNodes.value.find((item) => item.uid !== node.uid)?.id || "" });
+}
+
+function syncWorkflowFromJson() {
+  let definition;
+  try {
+    definition = parseAdvancedConfig();
+  } catch (error) {
+    Message.error(error.message || "Workflow JSON is invalid");
+    return;
+  }
+  loadWorkflowDraftFromDefinition(definition);
+  Message.success("Workflow canvas loaded from JSON");
+}
+
+function syncWorkflowToJson() {
+  try {
+    const definition = buildWorkflowDefinitionFromCanvas();
+    form.value.config_json = JSON.stringify(definition, null, 2);
+    Message.success("Workflow JSON updated from canvas");
+  } catch (error) {
+    Message.error(error.message || "Workflow canvas is invalid");
+  }
+}
+
+function loadWorkflowDraftFromDefinition(definition) {
+  const data = definition && typeof definition === "object" ? definition : {};
+  workflowDraft.value = {
+    version: data.version || "1.0.0",
+    status: data.status || "draft",
+    timeout_seconds: data.timeout_seconds || 300,
+    max_retries: data.max_retries || 0
+  };
+  workflowOutputJson.value = JSON.stringify(data.output || { summary: "{{ last.output }}", steps: "{{ steps }}" }, null, 2);
+  const steps = Array.isArray(data.steps) ? data.steps : [];
+  workflowNodes.value = steps.map((step, index) => ({
+    uid: `${Date.now()}_${index}_${Math.random().toString(16).slice(2)}`,
+    id: step.id || `step_${index + 1}`,
+    name: step.name || `Step ${index + 1}`,
+    agent_id: step.agent_id || "",
+    input_text: typeof step.input === "string" ? step.input : (step.input?.text || ""),
+    output_mode: step.output_mode || "text",
+    position: step.position || { x: 120 + index * 300, y: 140 },
+    routing: (step.routing || []).map((routeItem) => ({
+      mode: routeItem.default ? "default" : "condition",
+      condition: routeItem.condition || "",
+      next: routeItem.next || ""
+    }))
+  }));
+  ensureWorkflowNodes();
+
+  const uidByStepId = new Map(workflowNodes.value.map((node) => [node.id, node.uid]));
+  const edges = [];
+  const addEdgeFromStepIds = (sourceId, targetId) => {
+    const source = uidByStepId.get(sourceId);
+    const target = uidByStepId.get(targetId);
+    if (!source || !target || source === target) {
+      return;
+    }
+    if (!edges.some((edge) => edge.source === source && edge.target === target)) {
+      edges.push(makeWorkflowEdge(source, target));
+    }
+  };
+
+  steps.forEach((step, index) => {
+    const sourceId = String(step.id || `step_${index + 1}`);
+    const nextItems = Array.isArray(step.next) ? step.next : (step.next ? [step.next] : []);
+    nextItems.forEach((targetId) => addEdgeFromStepIds(sourceId, String(targetId)));
+    const dependsOnItems = Array.isArray(step.depends_on) ? step.depends_on : (step.depends_on ? [step.depends_on] : []);
+    dependsOnItems.forEach((dependencyId) => addEdgeFromStepIds(String(dependencyId), sourceId));
+  });
+
+  if (edges.length === 0 && workflowNodes.value.length > 1) {
+    workflowNodes.value.slice(0, -1).forEach((node, index) => {
+      edges.push(makeWorkflowEdge(node.uid, workflowNodes.value[index + 1].uid));
+    });
+  }
+  workflowEdges.value = edges;
+  updateWorkflowJsonFromCanvas();
+  requestWorkflowFitView();
+}
+
+function updateWorkflowJsonFromCanvas() {
+  if (!isWorkflowKind.value || workflowNodes.value.length === 0) {
+    return;
+  }
+  try {
+    const definition = buildWorkflowDefinitionFromCanvas();
+    form.value.config_json = JSON.stringify(definition, null, 2);
+  } catch {
+    // Keep the user's current JSON visible while the canvas has incomplete edits.
+  }
+}
+
+function buildWorkflowDefinitionFromCanvas() {
+  ensureWorkflowNodes();
+  const nodeByUid = new Map(workflowNodes.value.map((node) => [node.uid, node]));
+  const usedIds = new Set();
+  const steps = workflowNodes.value.map((node, index) => {
+    const id = (node.id || "").trim();
+    if (!id) {
+      throw new Error(`Node ${index + 1} step ID is required`);
+    }
+    if (usedIds.has(id)) {
+      throw new Error(`Duplicate step ID: ${id}`);
+    }
+    usedIds.add(id);
+    if (!node.agent_id) {
+      throw new Error(`Node ${index + 1} must select an Agent`);
+    }
+    const routing = (node.routing || [])
+      .filter((routeItem) => routeItem.next)
+      .map((routeItem) => {
+        if (routeItem.mode === "default") {
+          return { default: true, next: routeItem.next };
+        }
+        return { condition: routeItem.condition || "", next: routeItem.next };
+      });
+    const next = outgoingEdgesFor(node).map((edge) => nodeByUid.get(edge.target)?.id).filter(Boolean);
+    const dependsOn = incomingEdgesFor(node).map((edge) => nodeByUid.get(edge.source)?.id).filter(Boolean);
+    return {
+      id,
+      name: node.name || id,
+      agent_id: node.agent_id,
+      input: { text: node.input_text || "" },
+      output_mode: node.output_mode || "text",
+      position: node.position || { x: 120 + index * 300, y: 140 },
+      ...(next.length ? { next } : {}),
+      ...(dependsOn.length ? { depends_on: dependsOn } : {}),
+      ...(routing.length ? { routing } : {})
+    };
+  });
+  let output;
+  try {
+    output = JSON.parse(workflowOutputJson.value || "{}");
+  } catch {
+    throw new Error("Final Output JSON is invalid");
+  }
+  return {
+    version: workflowDraft.value.version || "1.0.0",
+    status: workflowDraft.value.status || "draft",
+    timeout_seconds: Number(workflowDraft.value.timeout_seconds || 300),
+    max_retries: Number(workflowDraft.value.max_retries || 0),
+    steps,
+    output
+  };
+}
 function applyCreateDefaultsByKind() {
   if (isEditMode.value) {
     return;
   }
   form.value.config_json = defaultAdvancedConfigJsonByKind(kind.value);
+  if (isWorkflowKind.value) {
+    loadWorkflowDraftFromDefinition(JSON.parse(form.value.config_json));
+    updateWorkflowJsonFromCanvas();
+  }
 }
 
 function goBack() {
@@ -820,6 +1435,22 @@ async function loadResource() {
     form.value.mcp_ids = [];
     form.value.knowledge_base_ids = [];
     form.value.config_json = "{}";
+    return;
+  }
+
+
+  if (isWorkflowKind.value) {
+    form.value.model_provider = "";
+    form.value.model_name = "";
+    form.value.provider_profile = "";
+    form.value.system_prompt = "";
+    form.value.custom_code = "";
+    form.value.tool_ids = [];
+    form.value.skill_ids = [];
+    form.value.mcp_ids = [];
+    form.value.knowledge_base_ids = [];
+    form.value.config_json = JSON.stringify(config, null, 2);
+    loadWorkflowDraftFromDefinition(config);
     return;
   }
 
@@ -976,10 +1607,14 @@ function buildRuntimeConfig() {
       ...parseAdvancedConfig()
     };
   }
+  if (isWorkflowKind.value) {
+    const definition = buildWorkflowDefinitionFromCanvas();
+    form.value.config_json = JSON.stringify(definition, null, 2);
+    return definition;
+  }
   if (!isAgentKind.value) {
     return parseAdvancedConfig();
   }
-  // Automatically use ReAct engine when MCPs are present
   const engine_type = (form.value.mcp_ids && form.value.mcp_ids.length > 0) ? "react" : "legacy";
   return {
     engine_type,
@@ -994,7 +1629,6 @@ function buildRuntimeConfig() {
     ...parseAdvancedConfig()
   };
 }
-
 function buildProviderDraftPayload() {
   const baseUrl = (form.value.provider_base_url || "").trim();
   if (!baseUrl) {
@@ -1292,6 +1926,22 @@ async function submitForm() {
   }
 }
 
+
+watch(
+  [workflowDraft, workflowNodes, workflowEdges, workflowOutputJson],
+  () => {
+    updateWorkflowJsonFromCanvas();
+  },
+  { deep: true }
+);
+watch(
+  () => isWorkflowKind.value,
+  (active) => {
+    if (active) {
+      requestWorkflowFitView();
+    }
+  }
+);
 onMounted(async () => {
   try {
     applyCreateDefaultsByKind();
@@ -1379,6 +2029,394 @@ onMounted(async () => {
   overflow-x: auto;
 }
 
+.workflow-builder {
+  margin: 22px 0;
+  padding: 22px;
+  border: 1px solid #d5e2f0;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #f7fbff 0%, #eef6ff 48%, #ffffff 100%);
+  box-shadow: 0 18px 48px rgba(20, 38, 70, 0.10);
+}
+
+.workflow-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: flex-start;
+  margin-bottom: 18px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #dce8f4;
+}
+
+.workflow-toolbar h3 {
+  margin: 0;
+  font-size: 24px;
+  color: #111c31;
+  letter-spacing: 0;
+}
+
+.workflow-toolbar p {
+  margin: 7px 0 0;
+  color: #607089;
+}
+
+.workflow-meta-row {
+  margin-bottom: 10px;
+  padding: 14px 14px 0;
+  border: 1px solid #dbe7f3;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.workflow-canvas {
+  padding: 16px;
+  border: 1px solid #d5e2f0;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #f6f9fd 0%, #eef6ff 100%);
+}
+
+.split-canvas {
+  display: grid;
+  grid-template-columns: minmax(720px, 1fr) minmax(340px, 390px);
+  gap: 18px;
+  align-items: start;
+}
+
+.workflow-flow-panel,
+.workflow-editor-panel {
+  border: 1px solid #d7e3f0;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 18px 42px rgba(31, 51, 79, 0.10);
+}
+
+.workflow-flow-panel {
+  padding: 16px;
+}
+
+.workflow-editor-panel {
+  padding: 18px;
+}
+
+.flow-panel-title,
+.editor-panel-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 14px;
+}
+
+.flow-panel-title span {
+  color: #162238;
+  font-weight: 800;
+}
+
+.editor-panel-heading h3 {
+  margin: 6px 0 0;
+  color: #162238;
+  font-size: 20px;
+}
+
+.flow-start,
+.flow-end {
+  width: fit-content;
+  min-width: 92px;
+  margin: 0 auto;
+  padding: 8px 14px;
+  border-radius: 999px;
+  text-align: center;
+  font-weight: 800;
+}
+
+.flow-start {
+  color: #075985;
+  background: #e0f2fe;
+}
+
+.flow-end {
+  color: #166534;
+  background: #dcfce7;
+}
+
+.flow-node-wrap {
+  display: grid;
+  justify-items: stretch;
+}
+
+.flow-connector {
+  display: grid;
+  place-items: center;
+  height: 28px;
+}
+
+.flow-connector span {
+  width: 2px;
+  height: 100%;
+  border-radius: 99px;
+  background: #9fb5ce;
+}
+
+.flow-node {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  min-height: 72px;
+  padding: 12px;
+  border: 1px solid #d7e3f0;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #1f2d3d;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease;
+}
+
+.flow-node:hover,
+.flow-node.active {
+  border-color: #0f766e;
+  box-shadow: 0 12px 30px rgba(15, 118, 110, 0.14);
+  transform: translateY(-1px);
+}
+
+.flow-node.active {
+  background: #f0fdfa;
+}
+
+.flow-node-index {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  background: #0f766e;
+  color: #ffffff;
+  font-weight: 800;
+}
+
+.flow-node-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.flow-node-copy strong,
+.flow-node-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flow-node-copy strong {
+  color: #162238;
+}
+
+.flow-node-copy small {
+  color: #64748b;
+}
+
+.flow-node-mode {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #eef4fb;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 800;
+}
+.workflow-fullscreen-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  display: grid;
+  padding: 14px;
+  background: rgba(11, 18, 32, 0.82);
+  backdrop-filter: blur(10px);
+}
+
+.workflow-fullscreen-shell {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 12px;
+  height: 100%;
+  border: 1px solid rgba(219, 231, 243, 0.45);
+  border-radius: 16px;
+  background: #f6f9fd;
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.32);
+  overflow: hidden;
+}
+
+.workflow-fullscreen-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: center;
+  padding: 14px 16px;
+  border-bottom: 1px solid #dbe7f3;
+  background: #ffffff;
+}
+
+.workflow-fullscreen-toolbar h3 {
+  margin: 0;
+  color: #162238;
+}
+
+.workflow-fullscreen-toolbar p {
+  margin: 4px 0 0;
+  color: #64748b;
+}
+.workflow-vue-flow {
+  width: 100%;
+  height: 700px;
+  border: 1px solid #dce8f4;
+  border-radius: 12px;
+  background: #f7fbff;
+  overflow: hidden;
+}
+
+.flow-card-node {
+  display: grid;
+  gap: 8px;
+  min-width: 250px;
+  padding: 14px;
+  border: 1px solid #d7e3f0;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 14px 34px rgba(31, 51, 79, 0.14);
+}
+
+.workflow-vue-node.selected .flow-card-node,
+.vue-flow__node.selected .flow-card-node {
+  display: grid;
+  gap: 8px;
+  min-width: 250px;
+  padding: 14px;
+  border: 1px solid #d7e3f0;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 14px 34px rgba(31, 51, 79, 0.14);
+}
+
+.flow-card-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.flow-card-head strong {
+  color: #162238;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flow-card-head span {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #eef4fb;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.workflow-vue-flow.fullscreen {
+  height: 100%;
+}
+
+.flow-card-node small {
+  color: #64748b;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.connection-editor {
+  margin: 14px 0 18px;
+  padding: 14px;
+  border: 1px solid #dbe7f3;
+  border-radius: 12px;
+  background: #f8fbff;
+}
+
+.connection-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+
+.connection-header strong {
+  color: #162238;
+}
+
+.connection-header span,
+.connection-empty {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.connection-groups {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.connection-groups small {
+  display: block;
+  margin-bottom: 8px;
+  color: #52627a;
+  font-weight: 700;
+}
+
+.connection-tags {
+  min-height: 30px;
+}
+
+.edge-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.edge-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #ffffff;
+  border: 1px solid #e2eaf3;
+  color: #334155;
+}
+
+.edge-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 900px) {
+  .workflow-toolbar,
+  .editor-panel-heading,
+  .routing-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .split-canvas {
+    grid-template-columns: 1fr;
+  }
+
+  .route-mode-select {
+    width: 100%;
+    flex-basis: auto;
+  }
+}
 .mcp-template-modal {
   max-height: 600px;
   overflow-y: auto;

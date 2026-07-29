@@ -26,7 +26,10 @@
 
       <Table :columns="columns" :data="pagedResources" stripe>
         <template #project="{ row }">
-          <Tag color="gold">{{ row.project_name }}</Tag>
+          <div class="project-cell">
+            <Tag color="gold">{{ row.project_name || '-' }}</Tag>
+            <span>{{ row.project_id }}</span>
+          </div>
         </template>
         <template #toolRuntime="{ row }">
           {{ toolConfig(row).runtime || '-' }}
@@ -53,7 +56,7 @@
         </template>
         <template #action="{ row }">
           <Space>
-            <Button size="small" @click="openDetail(row)">{{ resourceKind === 'skill' ? 'Manage' : 'Detail' }}</Button>
+            <Button size="small" @click="openDetail(row)">{{ detailActionLabel }}</Button>
             <Button
               v-if="resourceKind === 'knowledge_base'"
               size="small"
@@ -162,12 +165,17 @@ const kindLabel = computed(() => {
   return map[resourceKind.value] || "Resource";
 });
 
+const detailActionLabel = computed(() => {
+  if (resourceKind.value === "skill") return "Manage";
+  if (resourceKind.value === "workflow") return "Test";
+  return "Detail";
+});
 const columns = computed(() => {
   if (resourceKind.value === "tool") {
     return [
       { title: "Kind", key: "kind", width: 100 },
       { title: "Name", key: "name", minWidth: 180 },
-      { title: "Project", slot: "project", minWidth: 160 },
+      { title: "Project", slot: "project", minWidth: 220 },
       { title: "Visibility", key: "visibility", width: 120 },
       { title: "Runtime", slot: "toolRuntime", width: 120 },
       { title: "Function", slot: "toolFunction", minWidth: 150 },
@@ -181,7 +189,7 @@ const columns = computed(() => {
     return [
       { title: "Kind", key: "kind", width: 100 },
       { title: "Name", key: "name", minWidth: 180 },
-      { title: "Project", slot: "project", minWidth: 160 },
+      { title: "Project", slot: "project", minWidth: 220 },
       { title: "Visibility", key: "visibility", width: 120 },
       { title: "Transport", slot: "mcpTransport", width: 150 },
       { title: "Endpoint/Command", slot: "mcpEndpoint", minWidth: 220 },
@@ -194,7 +202,7 @@ const columns = computed(() => {
   const baseColumns = [
     { title: "Kind", key: "kind", width: 120 },
     { title: "Name", key: "name", minWidth: 180 },
-    { title: "Project", slot: "project", minWidth: 160 },
+    { title: "Project", slot: "project", minWidth: 220 },
     { title: "Visibility", key: "visibility", width: 120 }
   ];
 
@@ -273,9 +281,13 @@ function goCreate() {
 }
 
 function openDetail(row) {
-  // For skills, navigate to the detail page to manage and upload
+  // For skills and workflows, navigate to their dedicated management pages.
   if (resourceKind.value === 'skill') {
     router.push({ name: 'resources-skill-detail', params: { resourceId: row.id } });
+    return;
+  }
+  if (resourceKind.value === 'workflow') {
+    router.push({ name: 'workflows-detail', params: { resourceId: row.id } });
     return;
   }
   
@@ -339,3 +351,20 @@ watch(
 
 onMounted(loadData);
 </script>
+
+<style scoped>
+.project-cell {
+  display: grid;
+  gap: 5px;
+  align-items: center;
+}
+
+.project-cell span {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+</style>
