@@ -1,4 +1,4 @@
-﻿"""Helpers for progressive Agent Skill loading."""
+"""Helpers for progressive Agent Skill loading."""
 
 from __future__ import annotations
 

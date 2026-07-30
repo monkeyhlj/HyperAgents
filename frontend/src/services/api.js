@@ -290,9 +290,6 @@ export const api = {
     return request(`/api/v1/skills/${skillId}`);
   },
 
-  listProjectSkills(projectId, query = {}) {
-    return request(withQuery(`/api/v1/skills/projects/${projectId}/skills`, query));
-  },
 
   uploadSkill(skillId, formData) {
     const headers = { Authorization: "" };

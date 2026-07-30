@@ -589,3 +589,18 @@ New State:
 **文档版本**: v0.1.0  
 **最后更新**: 2026-07-13  
 **所有者**: HyperAgents Team
+## English Companion Summary
+
+This design note describes a future-oriented redesign of the Agent framework. The goal is to move from scattered execution paths toward a unified Agent runtime that can plan, call tools, retrieve knowledge, activate Skills, and expose clear observability.
+
+Key ideas:
+
+1. Separate Agent definition, runtime execution, tool management, memory/knowledge access, and provider adapters into clearer modules.
+2. Support ReAct-style loops where the Agent can think, choose an action, call a tool/MCP/Skill, observe the result, and continue until a final answer is ready.
+3. Keep structured runtime events so users can inspect which Agent ran, which tool was called, what failed, and why.
+4. Make Tool, MCP, Knowledge, and Skill behavior reusable through project-scoped bindings instead of one-off prompt logic.
+5. Improve safety through controlled execution boundaries, audit records, timeouts, and explicit configuration.
+
+Implementation status note:
+
+Some ideas from this redesign have already landed, especially ReAct support, Tool/MCP loading, Skill activation, and runtime events. Treat this document as architectural background; use module docs and code-api-map for current behavior.

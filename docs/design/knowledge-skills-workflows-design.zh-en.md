@@ -1174,3 +1174,31 @@ Customer Support Flow:
 
 - [Agent Framework Redesign](./agent-framework-redesign.zh-en.md)
 - [Architecture Overview](../reference/architecture-roadmap.zh-en.md)
+## English Companion Summary
+
+This design note covers three related capability families: Knowledge, Skills, and Workflows. It is a broad design record, so some lower sections preserve Chinese-first implementation details and schema notes.
+
+Knowledge design:
+
+1. A Knowledge resource owns uploaded documents, document chunks, embedding state, and Agent bindings.
+2. Documents should move through upload, parsing, chunking, embedding, retrieval, deletion, and reprocessing flows.
+3. Agents bind Knowledge resources and retrieve relevant chunks at runtime.
+4. Processing status should be visible in the frontend so users can see pending, running, succeeded, or failed documents.
+
+Skills design:
+
+1. A Skill is a reusable instruction package centered on `SKILL.md` and optional scripts/templates.
+2. The runtime should use progressive disclosure: discover short metadata first, load full instructions only when the task matches, then execute declared scripts when available.
+3. Skill-specific behavior belongs in the uploaded Skill package, not in hard-coded backend branches.
+4. Generated artifacts should be saved to My Files.
+
+Workflow design:
+
+1. A Workflow is a project-scoped orchestration definition for multiple Agents.
+2. The definition should include steps, Agent IDs, input templates, dependencies, routing, and output mapping.
+3. Runtime records should preserve run status, per-step input/output, duration, and errors.
+4. The frontend should provide both a visual canvas for authoring and a detail page for testing and tracing runs.
+
+Implementation status note:
+
+Knowledge, Skills, and Workflows have all moved beyond this original design in the current codebase. For current behavior, prefer the module docs: `docs/modules/knowledge.zh-en.md`, `docs/modules/skills.zh-en.md`, and `docs/modules/workflows.zh-en.md`.

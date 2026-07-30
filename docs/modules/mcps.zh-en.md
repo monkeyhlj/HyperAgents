@@ -51,18 +51,18 @@ MCP resources describe how to connect to external MCP servers, so agents can dis
 
 1. **transport** (必填)
    - 当前值：`streamable_http`（仅支持此值）
-   - 说明：MCP 连接方式。当前 **仅支持 HTTP 方式**；stdio 支持在规划中，暂不可用。
+   - 说明： / Notes:MCP 连接方式。当前 **仅支持 HTTP 方式**；stdio 支持在规划中，暂不可用。
 
 2. **endpoint_url** (当 transport=streamable_http 时必填)
    - 示例：`http://127.0.0.1:8099` 或 `https://api.example.com/mcp`
-   - 说明：MCP server 的 HTTP 基础地址。系统会自动拼接 `/health` 和 `/tools/call` 接口。
+   - 说明： / Notes:MCP server 的 HTTP 基础地址。系统会自动拼接 `/health` 和 `/tools/call` 接口。
 
 3. **command** (当 transport=stdio 时需要；当前不用填)
-   - 说明：stdio 模式启动命令，如 `python`。**暂不支持，文档占位。**
+   - 说明： / Notes:stdio 模式启动命令，如 `python`。**暂不支持，文档占位。**
 
 4. **args** (当 transport=stdio 时需要；当前不用填)
    - 示例：`["scripts/my_mcp_server.py"]`
-   - 说明：stdio 模式命令行参数数组。**暂不支持，文档占位。**
+   - 说明： / Notes:stdio 模式命令行参数数组。**暂不支持，文档占位。**
 
 5. **headers** (可选)
    - 作用：HTTP 请求头，用于认证和自定义字段
@@ -100,18 +100,18 @@ MCP resources describe how to connect to external MCP servers, so agents can dis
      ```
 
 7. **timeout_seconds** (可选，默认=8)
-   - 范围：1-300 秒
-   - 作用：HTTP 请求超时时间，包括健康检查和工具调用
-   - 说明：
-     - 若 MCP server 响应耗时较长，增大此值（如 30s）
-     - 若网络延迟高，建议 10-15s
-     - 过小会导致超时错误，过大会拖累前端响应
+   - 范围：1-300 秒 / Range: 1-300 seconds
+   - 作用：HTTP 请求超时时间，包括健康检查和工具调用 / Purpose: HTTP request timeout, including health checks and tool calls.
+   - 说明： / Notes:
+     - 若 MCP server 响应耗时较长，增大此值（如 30s） / Increase this value if the MCP server responds slowly, for example 30s.
+     - 若网络延迟高，建议 10-15s / For high network latency, 10-15s is recommended.
+     - 过小会导致超时错误，过大会拖累前端响应 / Too small causes timeout errors; too large slows frontend responses.
 
 ### Advanced Config JSON / 高级配置 JSON
 
-在"Create/Edit MCP"页面最下方，还有一个 `Advanced MCP Config JSON (Editable)` 编辑器。
+在"Create/Edit MCP"页面最下方，还有一个 `Advanced MCP Config JSON (Editable)` 编辑器。 / At the bottom of the Create/Edit MCP page, there is also an `Advanced MCP Config JSON (Editable)` editor.
 
-作用：存放 MCP-specific 的扩展配置，不被核心字段覆盖。
+作用：存放 MCP-specific 的扩展配置，不被核心字段覆盖。 / Purpose: store MCP-specific extension config that is not overwritten by core fields.
 
 示例用途：
 
@@ -196,33 +196,33 @@ MCP 列表页面显示已创建的 MCP 资源及其状态：
   - 协议写错：确保是 `http://` 或 `https://`
   - 域名解析失败：检查网络连接和 DNS
 
-##### Timeout (秒)
+##### Timeout (秒) / Timeout (seconds)
 
-- **默认值**：8 秒
-- **推荐范围**：5-30 秒
-- **调整建议**：
-  - 网络延迟 > 2s：设置为 15-20s
-  - MCP server 初始化慢：设置为 30s
-  - 本地测试：可设置 3-5s 快速反馈
-- **过小风险**：健康检查或工具调用超时
-- **过大风险**：前端对话等待时间长，影响用户体验
+- **默认值**：8 秒 / **Default**: 8 seconds
+- **推荐范围**：5-30 秒 / **Recommended range**: 5-30 seconds
+- **调整建议**： / **Tuning guidance**:
+  - 网络延迟 > 2s：设置为 15-20s / Network latency > 2s: set 15-20s.
+  - MCP server 初始化慢：设置为 30s / Slow MCP server startup: set 30s.
+  - 本地测试：可设置 3-5s 快速反馈 / Local testing: set 3-5s for faster feedback.
+- **过小风险**：健康检查或工具调用超时 / **Too small**: health checks or tool calls may time out.
+- **过大风险**：前端对话等待时间长，影响用户体验 / **Too large**: frontend chat waits longer and user experience suffers.
 
-##### Quick Test 按钮
+##### Quick Test 按钮 / Quick Test button
 
-- **点击后**：自动调用 probe API 测试当前配置
-- **结果**：
-  - 成功：显示绿色，列出可用工具
-  - 失败：显示红色，显示错误原因
-- **场景**：
-  - 新增 MCP 时快速验证配置正确性
-  - 修改 endpoint/timeout 后验证连接
-  - 保存前最后检查一遍
+- **点击后**：自动调用 probe API 测试当前配置 / **After click**: automatically calls the probe API to test the current configuration.
+- **结果**： / **Result**:
+  - 成功：显示绿色，列出可用工具 / Success: shown in green and lists available tools.
+  - 失败：显示红色，显示错误原因 / Failure: shown in red with the error reason.
+- **场景**： / **Use cases**:
+  - 新增 MCP 时快速验证配置正确性 / Quickly validate configuration when adding an MCP.
+  - 修改 endpoint/timeout 后验证连接 / Validate the connection after changing endpoint or timeout.
+  - 保存前最后检查一遍 / Run a final check before saving.
 
-#### 第三部分：认证与扩展配置
+#### 第三部分：认证与扩展配置 / Part 3: Auth and Extension Config
 
-##### Headers JSON (可选)
+##### Headers JSON (可选) / Headers JSON (optional)
 
-- **编辑器**：可视化 JSON 编辑器
+- **编辑器**：可视化 JSON 编辑器 / **Editor**: visual JSON editor
 - **作用**：添加 HTTP 请求头，用于认证和自定义参数
 - **常见用途**：
 
@@ -245,7 +245,7 @@ MCP 列表页面显示已创建的 MCP 资源及其状态：
 
 ##### Env JSON (可选)
 
-- **编辑器**：可视化 JSON 编辑器
+- **编辑器**：可视化 JSON 编辑器 / **Editor**: visual JSON editor
 - **作用**：记录环境变量和 MCP 特定配置（**HTTP 模式下当前不传输，仅文档用途**）
 - **常见用途**：
 
@@ -399,9 +399,9 @@ MCP 列表页面显示已创建的 MCP 资源及其状态：
 }
 ```
 
-##### 模板 3：带版本头/租户头
+##### 模板 3：带版本头/租户头 / Template 3: With version and tenant headers
 
-适用于需要额外版本与租户标识的服务。
+适用于需要额外版本与租户标识的服务。 / Use this for services that require extra version and tenant identifiers.
 
 ```json
 {
@@ -717,9 +717,9 @@ A: 调整：
 2. 检查网络连接和 MCP server 状态
 3. 检查 Custom Code 逻辑是否正确处理超时异常
 
-**Q4: Headers 中的 token 每次都要更新吗**
+**Q4: Headers 中的 token 每次都要更新吗 / Do tokens in Headers need to be updated every time?**
 
-A: 目前是。建议：
-1. 定期在 MCP 资源中更新 token
-2. 如果 MCP server 支持长期 token，配置长期 token
-3. 考虑使用环境变量或密钥管理服务（未来版本支持）
+A: 目前是。建议： / Currently yes. Recommended:
+1. 定期在 MCP 资源中更新 token / Update the token in the MCP resource regularly.
+2. 如果 MCP server 支持长期 token，配置长期 token / Configure a long-lived token if the MCP server supports it.
+3. 考虑使用环境变量或密钥管理服务（未来版本支持） / Consider environment variables or a secret manager, which can be supported in a future version.

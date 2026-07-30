@@ -414,3 +414,19 @@ backend/app/runtime/skill_activation.py
 2. 已加载 Skill 后再动态暴露该 Skill 关联的 MCP/tools/code-runner 能力，减少工具噪声。
 3. 在 Workbench Runtime Trace 中单独展示 Skill catalog、load_skill、loaded skills、Skill Code Runner 四个阶段。
 4. 逐步减少确定性 full SKILL.md 注入，过渡到真正的 catalog -> load_skill -> execute 模式。
+## English Companion Summary
+
+This design note explains how the Skill runtime should behave like a general Agent Skill system instead of hard-coding behavior for specific test Skills such as xlsx or front-design.
+
+Key goals:
+
+1. Preserve progressive disclosure: discover Skill names and descriptions first, load full `SKILL.md` only when relevant, and execute scripts only when the Skill package explicitly declares an executable entrypoint.
+2. Avoid prompt-specific backend branches. The runtime must not hard-code examples such as sales tables, class score sheets, flower websites, or any other business prompt.
+3. Support instruction-only Skills and executable Skills. Instruction-only Skills guide the Agent through `SKILL.md`; executable Skills run through a generic runtime contract.
+4. Use a generic Skill Code Runner for uploaded scripts. Script execution should come from the Skill package itself, not from backend artifact-specific modules.
+5. Save generated artifacts to My Files and return file paths instead of dumping large HTML/XLSX content into chat responses.
+6. Keep the runtime extensible for future Skills with different scripts, templates, and workflows.
+
+Implementation status note:
+
+The current codebase includes Skill activation, SkillRuntime, Skill Code Runner, artifact persistence to My Files, and documentation updates. Treat this design file as the improvement plan; use `docs/modules/skills.zh-en.md` for the current runtime contract.

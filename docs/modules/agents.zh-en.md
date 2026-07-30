@@ -99,11 +99,11 @@ def run(input_text, context):
 		return f"{role_name} 回复：{text}"
 ```
 
-为什么推荐这种写法：
+为什么推荐这种写法： / Why this pattern is recommended:
 
-- 输入和输出都清晰。
-- 依赖只来自 `input_text` 和 `context`，容易测试。
-- 能快速从低代码配置过渡到正式代码。
+- 输入和输出都清晰。 / Inputs and outputs are clear.
+- 依赖只来自 `input_text` 和 `context`，容易测试。 / Dependencies come only from `input_text` and `context`, which makes testing easier.
+- 能快速从低代码配置过渡到正式代码。 / It provides a smooth path from low-code configuration to production code.
 
 ### Tool call pattern in code mode / code 模式下调用 Tool
 
@@ -333,11 +333,11 @@ QWEN_DEFAULT_MODEL=qwen-plus
 - `mcp_ids`
 - `knowledge_base_ids`
 
-原因：
+原因： / Reason:
 
-- 它们已经有独立 UI。
-- 用独立 UI 更容易被前端校验、保存和预览。
-- JSON 更适合放“额外配置”，不是复制表单主字段。
+- 它们已经有独立 UI。 / These fields already have dedicated UI controls.
+- 用独立 UI 更容易被前端校验、保存和预览。 / Dedicated UI makes frontend validation, saving, and preview easier.
+- JSON 更适合放“额外配置”，不是复制表单主字段。 / JSON is better for extra configuration, not duplicating primary form fields.
 
 ## 7. How To Test / 如何测试
 
@@ -384,7 +384,7 @@ English:
 
 ### Q1. 为什么 `Dialog Test` 和保存后的行为不一致？
 
-通常原因：
+通常原因： / Reason:
 
 - `Advanced Config JSON` 格式不合法。
 - `run_mode` 不是 `code`。
@@ -412,7 +412,7 @@ role_name = config.get("role_name", "Code Agent")
 
 ### Q5. 为什么 LLM 回退没有被触发？
 
-可能原因：
+可能原因： / Reason:
 
 - Agent 没有配置 `model_provider` 和 `model_name`。
 - 返回值不是 `{"use_llm": True}` 的标准格式。

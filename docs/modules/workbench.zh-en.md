@@ -12,10 +12,10 @@ Provides session debugging, message exchange, runtime timeline viewing, and run-
 
 ## Current Scope / 当前范围
 
-1. 项目选择与会话创建。
-2. Agent 选择与消息发送。
-3. Run Timeline 与 Events 查看。
-4. 历史会话与历史消息加载。
+1. 项目选择与会话创建。 / Select projects and create sessions.
+2. Agent 选择与消息发送。 / Select Agents and send messages.
+3. Run Timeline 与 Events 查看。 / View Run Timeline and Events.
+4. 历史会话与历史消息加载。 / Load historical sessions and messages.
 5. Tool/MCP 调用标签展示。
 
 ## API Mapping / API 对照

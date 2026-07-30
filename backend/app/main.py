@@ -15,23 +15,28 @@ from app.db.schema import ensure_workflow_tables
 import app.db.models  # noqa: F401
 from app.workers.knowledge_processor import process_pending_documents, process_pending_embeddings
 
-# Configure logging with explicit StreamHandler to stdout
+def _resolve_log_level(value: str, default: int = logging.INFO) -> int:
+    return getattr(logging, (value or "INFO").upper(), default)
+
+
+app_log_level = _resolve_log_level(settings.log_level)
+uvicorn_log_level = _resolve_log_level(settings.uvicorn_log_level, app_log_level)
+
+# Configure logging with explicit StreamHandler to stdout.
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=app_log_level,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[logging.StreamHandler(sys.stdout)],
     force=True,
 )
 
-# Set specific loggers to DEBUG level for more verbose output
-logging.getLogger("app").setLevel(logging.DEBUG)
-logging.getLogger("uvicorn").setLevel(logging.DEBUG)
-logging.getLogger("uvicorn.access").setLevel(logging.DEBUG)
-logging.getLogger("uvicorn.error").setLevel(logging.DEBUG)
+logging.getLogger("app").setLevel(app_log_level)
+logging.getLogger("uvicorn").setLevel(uvicorn_log_level)
+logging.getLogger("uvicorn.access").setLevel(uvicorn_log_level)
+logging.getLogger("uvicorn.error").setLevel(uvicorn_log_level)
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
-
+logger.setLevel(app_log_level)
 app = FastAPI(title=settings.app_name, version=settings.app_version)
 logger.info(f"App process started: pid={os.getpid()}, ppid={os.getppid() if hasattr(os, 'getppid') else '-'}, cwd={os.getcwd()}")
 
@@ -101,13 +106,14 @@ logger.info(f"CORS enabled for origins: {settings.cors_allow_origins}")
 
 
 def _console_log(message: str) -> None:
-    print(message, flush=True)
     logger.info(message)
 
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     """Log every incoming HTTP request to the uvicorn console."""
+    if not settings.http_request_logging:
+        return await call_next(request)
     start_time = time.perf_counter()
     query = f"?{request.url.query}" if request.url.query else ""
     path = f"{request.url.path}{query}"

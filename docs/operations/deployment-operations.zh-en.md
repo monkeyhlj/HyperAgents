@@ -48,13 +48,13 @@ WORKER_BROKER_URL=redis://<redis-host>:6379/0
 WORKER_BACKEND_URL=redis://<redis-host>:6379/1
 ```
 
-安全建议：
+安全建议： / Security recommendations:
 
-- 不要将真实密钥提交到仓库。
-- 生产环境必须稳定保存 `AUTH_SECRET_KEY` 和 `PROVIDER_CONNECTION_SECRET_KEY`。
-- `PROVIDER_CONNECTION_SECRET_KEY` 变更会影响已加密 API Key 的解密，变更前需要重加密策略。
-- 定期轮换 Provider/MCP API keys。
-- 生产环境使用 Secret Manager 或 CI/CD Secret。
+- 不要将真实密钥提交到仓库。 / Do not commit real secrets to the repository.
+- 生产环境必须稳定保存 `AUTH_SECRET_KEY` 和 `PROVIDER_CONNECTION_SECRET_KEY`。 / In production, persist `AUTH_SECRET_KEY` and `PROVIDER_CONNECTION_SECRET_KEY` reliably.
+- `PROVIDER_CONNECTION_SECRET_KEY` 变更会影响已加密 API Key 的解密，变更前需要重加密策略。 / Changing `PROVIDER_CONNECTION_SECRET_KEY` affects decryption of stored API keys; plan re-encryption before changing it.
+- 定期轮换 Provider/MCP API keys。 / Rotate Provider and MCP API keys regularly.
+- 生产环境使用 Secret Manager 或 CI/CD Secret。 / Use a Secret Manager or CI/CD secrets in production.
 
 ## 3) Backend Deployment Steps
 
@@ -132,7 +132,7 @@ curl http://localhost:8000/health
 
 ## 7) Ops Checklist
 
-发布前：
+发布前： / Before release:
 
 1. 备份数据库。
 2. 执行 `alembic upgrade head`。

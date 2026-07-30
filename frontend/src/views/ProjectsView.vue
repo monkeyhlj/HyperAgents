@@ -40,20 +40,22 @@
           <Tag color="gold">{{ row.owner_name || row.owner_id }}</Tag>
         </template>
         <template #members="{ row }">
-          <Space>
-            <Tag v-for="(member, idx) in visibleMembers(row)" :key="member" color="blue">
-              {{ displayMemberName(row, idx) }}
-            </Tag>
-            <Poptip v-if="hiddenMemberNames(row).length > 0" trigger="hover" placement="bottom">
-              <Tag color="geekblue">+{{ hiddenMemberNames(row).length }}</Tag>
-              <template #content>
-                <Space wrap>
-                  <Tag v-for="name in hiddenMemberNames(row)" :key="name" color="blue">{{ name }}</Tag>
-                </Space>
-              </template>
-            </Poptip>
-            <Button v-if="canAddMembers(row)" size="small" @click="openManageMembers(row)">Manage</Button>
-          </Space>
+          <div class="members-cell">
+            <div class="member-tags">
+              <Tag v-for="(member, idx) in visibleMembers(row)" :key="member" color="blue">
+                {{ displayMemberName(row, idx) }}
+              </Tag>
+              <Poptip v-if="hiddenMemberNames(row).length > 0" trigger="hover" placement="bottom">
+                <Tag color="geekblue">+{{ hiddenMemberNames(row).length }}</Tag>
+                <template #content>
+                  <div class="member-popover-tags">
+                    <Tag v-for="name in hiddenMemberNames(row)" :key="name" color="blue">{{ name }}</Tag>
+                  </div>
+                </template>
+              </Poptip>
+            </div>
+            <Button v-if="canAddMembers(row)" class="members-manage-btn" size="small" @click="openManageMembers(row)">Manage</Button>
+          </div>
         </template>
         <template #action="{ row }">
           <Space>
@@ -276,7 +278,7 @@ const columns = [
   { title: "Name", slot: "name", minWidth: 200 },
   { title: "Description", key: "description", minWidth: 240 },
   { title: "Owner", slot: "owner", minWidth: 140 },
-  { title: "Members", slot: "members", minWidth: 200 },
+  { title: "Members", slot: "members", minWidth: 320 },
   { title: "ID", key: "id", minWidth: 280 },
   { title: "Action", slot: "action", minWidth: 260 }
 ];
@@ -573,3 +575,38 @@ watch(projectQuery, () => { projectPage.value = 1; });
 
 onMounted(loadProjects);
 </script>
+<style scoped>
+.members-cell {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  width: 100%;
+}
+
+.member-tags,
+.member-popover-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.member-tags {
+  flex: 1 1 auto;
+  max-height: 64px;
+  overflow: hidden;
+}
+
+.member-popover-tags {
+  max-width: 420px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.members-manage-btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+</style>

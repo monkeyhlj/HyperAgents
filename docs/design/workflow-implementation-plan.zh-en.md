@@ -538,3 +538,19 @@ Workflow Step ──┘                 ├── MCPs
 2. 补强 `SkillTool`，让 AgentRunner 能真正调用 Skill。
 
 然后再进入 Workflow P0。这样 Workflow 不会成为另一套平行 runtime，而是复用已经打通的 Agent 能力。
+## English Companion Summary
+
+This design note explains how Workflow should evolve from a simple `workflow` Resource into an executable multi-Agent orchestration system.
+
+Key goals:
+
+1. Define workflow steps, Agents, input templates, routing rules, and final output mapping in JSON first, with YAML as a possible future enhancement.
+2. Validate definitions before saving or running: all referenced Agents must be accessible in the same Project, step references must be valid, and cyclic graphs should be rejected in the MVP.
+3. Add runtime tables for workflow runs and step executions so every run, step input, step output, status, duration, and error can be inspected later.
+4. Implement a Workflow Engine that can render templates, call existing Agents, route by step output, and collect final output.
+5. Add a frontend test page with run history, step trace, intermediate outputs, and errors.
+6. Reuse the existing Agent runtime so Workflow steps automatically benefit from Tools, MCPs, Knowledge, and Skills already bound to each Agent.
+
+Implementation status note:
+
+The current codebase has already implemented the core Workflow runtime, visual canvas authoring, run API, run history, and step trace. Treat this design file as a historical implementation plan; use `docs/modules/workflows.zh-en.md` and `docs/reference/code-api-map.zh-en.md` for current behavior.

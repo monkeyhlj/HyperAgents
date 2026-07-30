@@ -182,12 +182,12 @@ During container/platform startup, inject secrets from Secret Manager as environ
 1. 从 `.env.example` 生成环境模板（dev/staging/prod 各一份）。
 2. 在模板中仅保留非敏感默认值，敏感项使用占位符。
 3. 在 Secret Manager 创建同名密钥并绑定最小权限访问策略。
-4. 在 CI/CD 中进行注入，不在流水线日志打印明文。
-5. 部署后通过 `/health` 和一次最小 API 流程做连通性验证。
+4. 在 CI/CD 中进行注入，不在流水线日志打印明文。 / Inject secrets in CI/CD and never print plaintext values in pipeline logs.
+5. 部署后通过 `/health` 和一次最小 API 流程做连通性验证。 / After deployment, validate connectivity with `/health` and one minimal API flow.
 
 ### 4) 密钥轮换与审计 / Rotation and Audit
 
-中文建议：
+中文建议： / Chinese recommendations:
 - 设定密钥轮换周期（如 30/60/90 天）。
 - 轮换时先双轨生效（旧密钥 + 新密钥短暂并存），验证后下线旧密钥。
 - 对 Tool/MCP 调用开启审计日志，记录调用方、目标、响应状态与耗时。

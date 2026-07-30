@@ -40,6 +40,7 @@ class Resource(TimeStampedModel):
     provider_profile: str | None = None
     provider_connection_id: str | None = None
     config: dict = Field(default_factory=dict)
+    bindings: dict = Field(default_factory=dict)
     source: str = "custom"
     template_id: str | None = None
 

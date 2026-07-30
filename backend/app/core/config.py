@@ -46,6 +46,9 @@ class Settings(BaseModel):
         "postgresql+psycopg://postgres:postgres@localhost:5432/hyperagents",
     )
     auto_create_tables: bool = _as_bool("AUTO_CREATE_TABLES", False)
+    log_level: str = os.getenv("LOG_LEVEL", "INFO").strip().upper()
+    uvicorn_log_level: str = os.getenv("UVICORN_LOG_LEVEL", os.getenv("LOG_LEVEL", "INFO")).strip().upper()
+    http_request_logging: bool = _as_bool("HTTP_REQUEST_LOGGING", True)
     cors_allow_origins: list[str] = _as_str_list(
         "CORS_ALLOW_ORIGINS",
         [

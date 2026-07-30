@@ -7,6 +7,7 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
 from app.db.models import (
+    AgentKnowledgeBindingModel,
     AgentSkillBindingModel,
     ChatMessageModel,
     ChatSessionModel,
@@ -582,8 +583,10 @@ class PostgresStore:
         return self._to_resource_schema(resource)
     def get_resource(self, db: Session, resource_id: str, actor: str) -> Resource:
         resource = self._get_resource_for_actor(db, resource_id, actor)
-        return self._to_resource_schema(resource)
-
+        schema = self._to_resource_schema(resource)
+        if resource.kind == ResourceKind.AGENT.value:
+            schema.bindings = self._agent_binding_summary(db, resource, actor)
+        return schema
     def delete_resource(self, db: Session, resource_id: str, actor: str) -> None:
         resource = db.get(ResourceModel, resource_id)
         if not resource:
@@ -689,6 +692,8 @@ class PostgresStore:
         result: list[OwnedResource] = []
         for resource, project in rows:
             base = self._to_resource_schema(resource)
+            if resource.kind == ResourceKind.AGENT.value:
+                base.bindings = self._agent_binding_summary(db, resource, user_id)
             result.append(
                 OwnedResource(
                     **base.model_dump(),
@@ -1201,6 +1206,167 @@ class PostgresStore:
             raise HTTPException(status_code=403, detail="No permission to edit resource")
         return resource
 
+    def _resource_binding_item(self, resource: ResourceModel, **extra: object) -> dict:
+        item = {
+            "id": resource.id,
+            "name": resource.name,
+            "kind": resource.kind,
+            "visibility": resource.visibility,
+        }
+        item.update({key: value for key, value in extra.items() if value is not None})
+        return item
+
+    def _merge_config_bound_resources(
+        self,
+        db: Session,
+        items: list[dict],
+        ids: list[str],
+        expected_kind: ResourceKind,
+        actor: str,
+    ) -> list[dict]:
+        seen = {str(item.get("id")) for item in items}
+        for resource_id in ids:
+            normalized_id = str(resource_id or "").strip()
+            if not normalized_id or normalized_id in seen:
+                continue
+            resource = db.get(ResourceModel, normalized_id)
+            if not resource or resource.kind != expected_kind.value:
+                continue
+            visibility = Visibility(resource.visibility)
+            if visibility == Visibility.PRIVATE and resource.owner_id != actor:
+                continue
+            items.append(self._resource_binding_item(resource, source="config"))
+            seen.add(normalized_id)
+        return items
+
+    def _agent_binding_summary(self, db: Session, agent: ResourceModel, actor: str) -> dict:
+        config = agent.config or {}
+        tool_items = self._merge_config_bound_resources(
+            db,
+            [],
+            [str(item) for item in (config.get("tool_ids") or config.get("tools") or []) if item],
+            ResourceKind.TOOL,
+            actor,
+        )
+        mcp_items = self._merge_config_bound_resources(
+            db,
+            [],
+            [str(item) for item in (config.get("mcp_ids") or config.get("mcps") or config.get("mcp_servers") or []) if item],
+            ResourceKind.MCP,
+            actor,
+        )
+
+        skill_items: list[dict] = []
+        skill_bindings = db.scalars(
+            select(AgentSkillBindingModel)
+            .where(
+                AgentSkillBindingModel.project_id == agent.project_id,
+                AgentSkillBindingModel.agent_id == agent.id,
+                AgentSkillBindingModel.enabled.is_(True),
+            )
+            .order_by(AgentSkillBindingModel.priority.desc())
+        ).all()
+        for binding in skill_bindings:
+            resource = db.get(ResourceModel, binding.skill_id)
+            if not resource or resource.kind != ResourceKind.SKILL.value:
+                continue
+            visibility = Visibility(resource.visibility)
+            if visibility == Visibility.PRIVATE and resource.owner_id != actor:
+                continue
+            skill_items.append(
+                self._resource_binding_item(
+                    resource,
+                    priority=binding.priority,
+                    enabled=binding.enabled,
+                    source="binding",
+                )
+            )
+
+        knowledge_items: list[dict] = []
+        knowledge_bindings = db.scalars(
+            select(AgentKnowledgeBindingModel)
+            .where(
+                AgentKnowledgeBindingModel.project_id == agent.project_id,
+                AgentKnowledgeBindingModel.agent_id == agent.id,
+                AgentKnowledgeBindingModel.enabled.is_(True),
+            )
+            .order_by(AgentKnowledgeBindingModel.priority.desc())
+        ).all()
+        for binding in knowledge_bindings:
+            resource = db.get(ResourceModel, binding.knowledge_id)
+            if not resource or resource.kind != ResourceKind.KNOWLEDGE_BASE.value:
+                continue
+            visibility = Visibility(resource.visibility)
+            if visibility == Visibility.PRIVATE and resource.owner_id != actor:
+                continue
+            knowledge_items.append(
+                self._resource_binding_item(
+                    resource,
+                    priority=binding.priority,
+                    enabled=binding.enabled,
+                    top_k=binding.top_k,
+                    similarity_threshold=binding.similarity_threshold,
+                    source="binding",
+                )
+            )
+
+        skill_ids = [str(item) for item in (config.get("skill_ids") or config.get("skills") or []) if item]
+        knowledge_ids = [
+            str(item)
+            for item in (config.get("knowledge_base_ids") or config.get("knowledge_bases") or config.get("knowledge") or [])
+            if item
+        ]
+        skill_items = self._merge_config_bound_resources(db, skill_items, skill_ids, ResourceKind.SKILL, actor)
+        knowledge_items = self._merge_config_bound_resources(
+            db,
+            knowledge_items,
+            knowledge_ids,
+            ResourceKind.KNOWLEDGE_BASE,
+            actor,
+        )
+
+        workflow_items: list[dict] = []
+        workflow_rows = db.scalars(
+            select(ResourceModel).where(
+                ResourceModel.project_id == agent.project_id,
+                ResourceModel.kind == ResourceKind.WORKFLOW.value,
+            )
+        ).all()
+        for workflow in workflow_rows:
+            visibility = Visibility(workflow.visibility)
+            if visibility == Visibility.PRIVATE and workflow.owner_id != actor:
+                continue
+            workflow_config = workflow.config or {}
+            steps = workflow_config.get("steps") if isinstance(workflow_config, dict) else []
+            if not isinstance(steps, list):
+                continue
+            matching_steps = [
+                str(step.get("name") or step.get("id") or "step")
+                for step in steps
+                if isinstance(step, dict) and str(step.get("agent_id") or "") == agent.id
+            ]
+            if matching_steps:
+                workflow_items.append(
+                    self._resource_binding_item(
+                        workflow,
+                        source="workflow",
+                        step_count=len(matching_steps),
+                        steps=matching_steps,
+                    )
+                )
+
+        return {
+            "tools": tool_items,
+            "skills": skill_items,
+            "mcps": mcp_items,
+            "knowledge_bases": knowledge_items,
+            "workflows": workflow_items,
+            "tool_count": len(tool_items),
+            "skill_count": len(skill_items),
+            "mcp_count": len(mcp_items),
+            "knowledge_base_count": len(knowledge_items),
+            "workflow_count": len(workflow_items),
+        }
     def _to_resource_schema(self, resource: ResourceModel) -> Resource:
         return Resource(
             id=resource.id,

@@ -237,7 +237,7 @@ def run(input_text, context):
 原因：Agent 不是 `run_mode=code`，或未在 `Associate Tools` 关联。
 
 3. 报 `Import not allowed`
-原因：导入了白名单外模块。
+原因：导入了白名单外模块。 / Reason: the code imported a module outside the allowlist.
 
 4. 报 `name 'xxx' is not defined`
-原因：沙箱白名单未放行对应内置函数，需在后端扩展白名单。
+原因：沙箱白名单未放行对应内置函数，需在后端扩展白名单。 / Reason: the sandbox allowlist does not expose the required built-in function; extend the backend allowlist if needed.
