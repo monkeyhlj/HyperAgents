@@ -66,4 +66,5 @@ nav:
       - Skills Runtime Improvement Plan: design/skills-runtime-improvement-plan.zh-en.md
       - Workflow Implementation Plan: design/workflow-implementation-plan.zh-en.md
       - Agent Framework Redesign: design/agent-framework-redesign.zh-en.md
+      - HelloAgents Integration Analysis: design/hello-agents-integration-analysis.zh-en.md
   - Docs Portal: README.md
