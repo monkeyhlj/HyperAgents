@@ -191,7 +191,96 @@ HyperAgents 中最重要的抽象之一是 Resource。当前支持 6 类核心�
 
 ![Resource Detail Screenshot](./images/hyperagents-resource-detail.png)
 
-## 6. Agent Workbench
+## 6. Agents：项目中的核心执行单元
+
+Agent 是 HyperAgents 里最核心的执行资源。每个 Agent 都属于某个 Project，并且可以配置模型、Provider Profile、系统提示词、运行模式和绑定能力。
+
+当前 Agent 支持的核心信息包括：
+
+- Agent 名称和描述
+- 所属 Project
+- 可见性：`private` / `project` / `public`
+- Model Provider
+- Model Name
+- Provider Profile
+- Provider Connection
+- 运行配置 config
+- 绑定的 Tools、Skills、MCPs、Knowledge Bases
+- 被哪些 Workflows 引用
+
+Agent Detail 页面会展示 Agent 的基础信息、模型设置、绑定能力和关联资源。这样在调试时可以很清楚地看到：这个 Agent 到底用了哪个模型，绑定了哪些 Skill，接入了哪些 Knowledge Base，以及是否参与了某个 Workflow。
+
+截图占位：Agents 列表页面
+
+![Agents Screenshot](./images/hyperagents-agents.png)
+
+截图占位：Agent Detail 页面
+
+![Agent Detail Screenshot](./images/hyperagents-agent-detail.png)
+
+## 7. Tools：把可复用函数接入 Agent
+
+Tool 用来封装可调用的函数、脚本或 API。相比直接把逻辑写进 Prompt，Tool 更适合承载确定性的操作，例如：
+
+- 查询某个内部接口
+- 执行一段 Python 逻辑
+- 处理结构化输入输出
+- 调用外部服务
+- 给 code-mode Agent 提供函数能力
+
+在 HyperAgents 中，Tool 也是一种 Resource，拥有统一的 Project 归属、可见性和配置字段。
+
+Tool 当前常见配置包括：
+
+- runtime
+- entrypoint
+- input_schema
+- output_schema
+- code
+- timeout_seconds
+- shared_in_project
+
+这样 Agent 在运行时可以从项目中加载对应 Tool，而不是把所有逻辑写死在 Agent 代码里。
+
+截图占位：Tools 列表页面
+
+![Tools Screenshot](./images/hyperagents-tools.png)
+
+截图占位：Tool Detail / Edit 页面
+
+![Tool Detail Screenshot](./images/hyperagents-tool-detail.png)
+
+## 8. MCPs：接入 Model Context Protocol 工具生态
+
+MCP 是当前 Agent 工具生态里非常重要的一环。HyperAgents 把 MCP Server 配置也纳入统一 Resource 管理，让项目可以按需创建、测试和绑定 MCP。
+
+MCP Resource 当前支持的核心配置包括：
+
+- transport，例如 `streamable_http` 或 `stdio`
+- endpoint_url
+- command
+- args
+- headers
+- env
+- timeout_seconds
+
+在 MCP 页面，可以测试 MCP 是否可用，并查看连接状态。Agent 运行时可以读取绑定的 MCP 配置，把 MCP 暴露的工具加入执行上下文。
+
+这样做的好处是：
+
+1. MCP 不再只是本地某个配置文件里的临时工具，而是项目资源。
+2. 同一个 MCP 可以被项目中的多个 Agent 复用。
+3. MCP 的连接配置、可见性和测试状态都可以在前端管理。
+4. 后续可以进一步扩展 MCP 工具列表展示、工具调用日志和权限控制。
+
+截图占位：MCPs 列表页面
+
+![MCPs Screenshot](./images/hyperagents-mcps.png)
+
+截图占位：MCP Test 页面
+
+![MCP Test Screenshot](./images/hyperagents-mcp-test.png)
+## 9. Agent Workbench
 
 Workbench 是测试 Agent 的主要入口。用户可以选择 Project，再选择某个 Agent 进行问答测试。
 
@@ -210,7 +299,7 @@ Workbench 当前支持：
 
 ![Workbench Screenshot](./images/hyperagents-workbench.png)
 
-## 7. Skills：让 Agent 获得“怎么做”的能力
+## 10. Skills：让 Agent 获得“怎么做”的能力
 
 我对 Agent Skill 的理解是：
 
@@ -242,7 +331,7 @@ HyperAgents 当前已经支持 Skill 上传、Agent 绑定、运行时发现和�
 
 ![Skills Screenshot](./images/hyperagents-skills.png)
 
-## 8. Knowledge Base：让 Agent 带上项目知识
+## 11. Knowledge Base：让 Agent 带上项目知识
 
 Knowledge Base 用来管理文档、切分、向量检索和 Agent 绑定。
 
@@ -261,7 +350,7 @@ Knowledge Base 用来管理文档、切分、向量检索和 Agent 绑定。
 
 ![Knowledge Screenshot](./images/hyperagents-knowledge.png)
 
-## 9. Workflow：图形化多 Agent 编排
+## 12. Workflow：图形化多 Agent 编排
 
 Workflow 是 HyperAgents 后续非常重要的一部分。当前已经实现了基础 Workflow 能力：
 
@@ -300,7 +389,7 @@ Workflow 是 HyperAgents 后续非常重要的一部分。当前已经实现了�
 
 > Workflow 当前也还在持续完善中。基础图形化编排、运行和历史记录已经具备，但更复杂的节点类型、分支条件、失败恢复、并行策略、变量映射和可视化调试体验，还需要继续迭代。
 
-## 10. My Files：统一管理输入与生成物
+## 13. My Files：统一管理输入与生成物
 
 Agent 和 Skill 经常会生成文件，例如：
 
@@ -325,7 +414,7 @@ HyperAgents 提供了 My Files 页面，用来统一管理：
 
 ![My Files Screenshot](./images/hyperagents-my-files.png)
 
-## 11. Provider 与模型接入
+## 14. Provider 与模型接入
 
 HyperAgents 采用 OpenAI-compatible Provider 思路。也就是说，只要某个模型服务兼容 OpenAI Chat Completions API，就可以通过类似下面的环境变量接入：
 
@@ -351,7 +440,7 @@ NVIDIA_DEFAULT_MODEL
 
 同时，项目级 Provider Connection 也支持把连接信息保存到数据库中，方便按项目管理不同模型配置。
 
-## 12. 当前项目状态
+## 15. 当前项目状态
 
 HyperAgents 目前还在快速迭代中。已经完成并能测试的核心模块包括：
 
@@ -378,7 +467,7 @@ HyperAgents 目前还在快速迭代中。已经完成并能测试的核心模�
 - 更完整的端到端测试
 - 更漂亮和更系统化的前端交互体验
 
-## 13. 后续计划
+## 16. 后续计划
 
 接下来计划重点优化：
 
@@ -400,7 +489,7 @@ HyperAgents 目前还在快速迭代中。已经完成并能测试的核心模�
 6. 前端体验  
    继续优化 Dashboard、Workbench、Resource Detail、Workflow Canvas 和 My Files。
 
-## 14. 适合哪些人关注
+## 17. 适合哪些人关注
 
 如果你正在关注下面这些方向，可能会对 HyperAgents 感兴趣：
 
@@ -414,7 +503,7 @@ HyperAgents 目前还在快速迭代中。已经完成并能测试的核心模�
 - 文件型 Agent 输出
 - 从 Demo 到系统化 Agent 平台的工程实践
 
-## 15. 一些个人建议和思考
+## 18. 一些个人建议和思考
 
 做这个项目的过程中，我越来越觉得 Agent 平台的难点不只是“调模型”。更复杂的问题往往在工程层：
 
@@ -429,7 +518,7 @@ HyperAgents 目前还在快速迭代中。已经完成并能测试的核心模�
 
 当然，项目现在还不完美。尤其 Skills 和 Workflow 都还需要继续调试和迭代。但我希望把这个过程公开出来，也欢迎大家一起讨论：什么样的 Agent 平台设计才更合理？Skills 应该如何执行？Workflow 应该如何建模？前端交互应该如何设计？
 
-## 16. 欢迎 Star 和建议
+## 19. 欢迎 Star 和建议
 
 如果你觉得这个项目方向有价值，欢迎给 GitHub 项目点一个 Star：
 
